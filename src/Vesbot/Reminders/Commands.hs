@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Vesbot.Reminders.Commands where
 
@@ -10,45 +10,48 @@ import Vesbot.Parsing (extractStringOption, extractField, extractOptionsData, pa
 import Vesbot.Actions (Action(..))
 import Vesbot.Reminders.Types
 import Vesbot.Reminders.Database
-import Vesbot.BotCommands.Types (BotCommand(..))
+import Vesbot.BotCommands.Types (BotCommand(..), SlashCommandInteraction (SlashCommandInteraction))
+
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction
 
 import JSONScheduler.Scheduler (Schedule(..), scheduleJob)
 
 import Discord
 import Discord.Types
-import Discord.Internal.Types.Interactions
+import Discord.Internal.Types.Interactions 
+ (OptionsData(..)
+ , InteractionResponse(..)
+ , ApplicationCommandData(..)
+ , interactionResponseBasic
+ )
 import Discord.Internal.Types.ApplicationCommands
 import qualified Discord.Requests as R
 import Data.Time
 import qualified Data.Text as T
 
-parseReminderCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (ReminderData, ChannelId)
+parseReminderCommand :: UTCTime -> SlashCommandInteraction -> Maybe OptionsData -> Either T.Text (ReminderData, ChannelId)
 parseReminderCommand
   currTime
-  InteractionApplicationCommand
-    { applicationCommandData = cmdData
-    , interactionUser
-    , interactionChannelId
-    , interactionGuildId
-    }
+  (SlashCommandInteraction _ channelData cmdData)
   opts =
   do
-    let cmdName = applicationCommandDataName cmdData
+    let cmdName = cmdData.applicationCommandDataName
     optValues <- extractOptionsData cmdName opts
     reminderText <- extractField extractStringOption "content" cmdName optValues
     dueDateText <- extractField extractStringOption "date" cmdName optValues
     _ <-
       maybeToEither
         "Error accessing Guild ID for the remind command. Note that this command can only be used in a server."
-        interactionGuildId
+        channelData.interactionGuildId
     cid <-
       maybeToEither
         "Error accessing channel ID for the remind command. Note that this command can only be used in a server."
-        interactionChannelId
+        channelData.interactionChannelId
     uid <-
       maybeToEither
         "Could not get user data for the remind command. Note that this command can only be used in a server."
-        (getUserData interactionUser)
+        (getUserData channelData.interactionUser)
     dueDateUTC <-
       maybeToEither
         (T.intercalate "\n"
@@ -69,9 +72,6 @@ parseReminderCommand
           }
       , cid
       )
-
-parseReminderCommand _ _ _ = Left "Tried to parse an interaction that is not a chat input slash command when parsing the reminder command."
-
 
 -- | Generate the bot reply to the command. parseReminderCommand returns either an error message or a record of the
 -- relevant reminder command data. We must either respond with an (ephemeral) error, or else form the bot reply
@@ -98,17 +98,17 @@ setReminder :: Env -> BotCommand
 setReminder env = SlashCommand
   { commandName = "remind"
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common _ _) opts -> do
       currTime <- liftIO getCurrentTime
-      let iTok = interactionToken intr -- save the interaction token to get the message ID of the bot's reply
+      let iTok = common.interactionToken -- save the interaction token to get the message ID of the bot's reply
       let mrd = parseReminderCommand currTime intr opts :: Either T.Text (ReminderData, ChannelId)
       let botReply = createInitialReminderResponse currTime mrd
 
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           botReply
 
       -- | If the reminderCommandData was parsed correctly, we want to save the reminder to the database
@@ -118,7 +118,7 @@ setReminder env = SlashCommand
         Right (rd, cid) | currTime < reminderDueDate rd -> do
           maybeResult <- restCall $
             R.GetOriginalInteractionResponse
-              (interactionApplicationId intr)
+              common.interactionApplicationId
               iTok
           case maybeResult of
             Right msg -> do

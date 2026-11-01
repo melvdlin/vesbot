@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Vesbot.ArgumentTimer.Commands where
 
 import Vesbot.Utils (showT, liftIO, void)
@@ -7,6 +8,10 @@ import Vesbot.Config (Config(..))
 import Vesbot.Database.Types (DBConnection)
 import Vesbot.ArgumentTimer.Database (getLastArgument, updateArgumentTime)
 import Vesbot.BotCommands.Types
+
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction
+
 
 import Discord
 import Discord.Interactions as I
@@ -19,7 +24,7 @@ viewAC :: DBConnection -> Config -> BotCommand
 viewAC dbconn cfg = SlashCommand
   { commandName = "viewac"
   , commandRegistration = I.createChatInput "viewac" "View the last obnoxious argument"
-  , slashCommandHandler = \intr _ -> do
+  , slashCommandHandler = \(SlashCommandInteraction common _ _) _ -> do
       mt <- liftIO . getLastArgument $ dbconn
 
       let reply = case mt of
@@ -31,8 +36,8 @@ viewAC dbconn cfg = SlashCommand
 
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           (interactionResponseBasic reply)
   }
 
@@ -41,11 +46,11 @@ resetAC :: DBConnection -> BotCommand
 resetAC dbconn = MessageCommand
   { commandName = "resetac"
   , commandRegistration = reg
-  , messageCommandHandler = \intr -> do
+  , messageCommandHandler = \(MessageCommandInteraction common channelData cmdData) -> do
       now <- liftIO getCurrentTime
-      let d = applicationCommandData intr
-          mcid = interactionChannelId intr
-          mid = applicationCommandDataTargetMessageId d
+      let d = cmdData
+          mcid = channelData.interactionChannelId
+          mid = d.applicationCommandDataTargetMessageId
       reply <-
         case mcid of
           Nothing -> return "Error getting channel ID for the command."
@@ -54,8 +59,8 @@ resetAC dbconn = MessageCommand
             return "Time since the last obnoxious argument: 0 days..."
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           (interactionResponseBasic reply)
   }
   where

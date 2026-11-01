@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Vesbot.Predictions.Commands
   ( makePrediction
@@ -12,30 +12,28 @@ import Vesbot.Parsing (extractNumberOption, extractStringOption, parseDateInput,
 import Vesbot.Actions (Action(..))
 import Vesbot.Predictions.Types
 import Vesbot.Predictions.Database
-import Vesbot.BotCommands.Types (BotCommand(..))
+import Vesbot.BotCommands.Types (BotCommand(..), SlashCommandInteraction (SlashCommandInteraction))
+
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction
 
 import JSONScheduler.Scheduler (Schedule(..), scheduleJob)
 
 import Discord
 import Discord.Types
-import Discord.Internal.Types.Interactions
+import Discord.Internal.Types.Interactions (OptionsData(..), InteractionResponse(..), interactionResponseBasic, ApplicationCommandData(..))
 import Discord.Internal.Types.ApplicationCommands
 import qualified Discord.Requests as R
 import Data.Time
 import qualified Data.Text as T
 
 
-parsePredictionCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (PredictionData, ChannelId)
+parsePredictionCommand :: UTCTime -> SlashCommandInteraction -> Maybe OptionsData -> Either T.Text (PredictionData, ChannelId)
 parsePredictionCommand
   currTime
-  InteractionApplicationCommand
-    { applicationCommandData = cmdData
-    , interactionUser
-    , interactionChannelId
-    , interactionGuildId
-    }
+  (SlashCommandInteraction _ channelData cmdData)
   opts = do
-    let cmdName = applicationCommandDataName cmdData
+    let cmdName = cmdData.applicationCommandDataName
 
     optValues <- extractOptionsData cmdName opts
     let confidence = extractNumberOption "confidence" optValues -- it's ok if it fails since it's optional
@@ -43,15 +41,15 @@ parsePredictionCommand
     dueDateText <- extractField extractStringOption "date" cmdName optValues
     _ <- maybeToEither
           "Error accessing Guild ID for the prediction command. Note that this command can only be used in a server."
-          interactionGuildId
+          channelData.interactionGuildId
     cid <-
       maybeToEither
         "Error accessing channel ID for the prediction command. Note that this command can only be used in a server."
-        interactionChannelId
+        channelData.interactionChannelId
     uid <-
       maybeToEither
         "Could not get user data for the prediction command. Note that this command can only be used in a server."
-        (getUserData interactionUser)
+        (getUserData channelData.interactionUser)
     dueDateUTC <-
       maybeToEither
         (T.intercalate "\n"
@@ -73,8 +71,6 @@ parsePredictionCommand
           }
       , cid
       )
-
-parsePredictionCommand _ _ _ = Left "Tried to parse an interaction that is not a chat input slash command when parsing the prediction command."
 
 -- | Generate the bot reply to the command. parsePredictionCommand returns either an error message or a record of the
 -- relevant prediction command data. We must either respond with an (ephemeral) error, or else form the bot reply
@@ -109,17 +105,17 @@ makePrediction :: Env -> BotCommand
 makePrediction env = SlashCommand
   { commandName = "predict"
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common _ _) opts -> do
       currTime <- liftIO getCurrentTime
-      let iTok = interactionToken intr -- save the interaction token to get the message ID of the bot's reply
+      let iTok = common.interactionToken -- save the interaction token to get the message ID of the bot's reply
       let mpd = parsePredictionCommand currTime intr opts :: Either T.Text (PredictionData, ChannelId)
       let botReply = createInitialPredictionResponse currTime mpd
 
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           botReply
 
       -- | If the predictionCommandData was parsed correctly, we want to save the prediction to the database
@@ -129,7 +125,7 @@ makePrediction env = SlashCommand
         Right (pd, cid) | currTime < predictionDueDate pd -> do
           maybeResult <- restCall $
             R.GetOriginalInteractionResponse
-              (interactionApplicationId intr)
+              common.interactionApplicationId
               iTok
           case maybeResult of
             Right msg -> do

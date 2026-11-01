@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Vesbot.Handler.Interactions
   ( interactionHandler
   ) where
@@ -15,13 +16,14 @@ import Discord.Types
 import Discord.Interactions
 
 import qualified Data.Text as T
+import Vesbot.BotCommands.Types (SlashCommandInteraction (SlashCommandInteraction))
 
 -- | Only supports application commands currently. When someone uses an application command, the
 -- function tries to look it up in the list of the registered commands.
-interactionHandler :: Config -> Env -> Interaction -> DiscordHandler ()
+interactionHandler :: Config -> Env -> SlashCommandInteraction -> DiscordHandler ()
 interactionHandler cfg env =
   \case
-    cmd@InteractionApplicationCommand {} -> case applicationCommandData cmd of
+    cmd@(SlashCommandInteraction common channelData cmdData) -> case cmdData.applicationCommandData of
       slashInput@ApplicationCommandDataChatInput {} ->
         case find (\c -> applicationCommandDataName slashInput == commandName c) (BC.slashCommands env cfg) of
           Just found -> do
@@ -49,7 +51,7 @@ interactionHandler cfg env =
     _ -> return () -- Unexpected/unsupported interaction type
 
 --TODO: Really needs a more advanced parsing system for more button types.
-buttonInteractionHandler :: Env -> Interaction -> DiscordHandler ()
+buttonInteractionHandler :: Env -> SlashCommandInteraction -> DiscordHandler ()
 buttonInteractionHandler env =
   \case
     InteractionComponent

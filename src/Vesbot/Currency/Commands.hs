@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Vesbot.Currency.Commands
   ( payCommand
   , viewCurrencyCommand
@@ -14,13 +15,26 @@ import Vesbot.Config (Config(..), CurrencyConfig(..))
 import Vesbot.Database.Types (DBConnection)
 import Vesbot.Currency.Types (PayCommandData(..), CurrencyQuery(..), EmojiQuery(..), CurrencyUpdate(..))
 import Vesbot.Currency.Database (getCurrency, getEmojis, updateCurrency, getRichestUsers)
-import Vesbot.BotCommands.Types (BotCommand(..))
+import Vesbot.BotCommands.Types (BotCommand(..), SlashCommandInteraction(..))
+
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction
 
 import Discord
 import Discord.Types
 import qualified Discord.Requests as R
-import Discord.Internal.Types.ApplicationCommands
+-- import Discord.Internal.Types.ApplicationCommands
 import Discord.Internal.Types.Interactions
+  ( OptionsData(..)
+  , InteractionResponse(..)
+  , InteractionResponseMessage(..), ApplicationCommandData (applicationCommandDataName)
+  )
+import Discord.Interactions
+  ( OptionValue(..)
+  , Options(..)
+  , CreateApplicationCommand(..)
+  , createChatInput
+  )
 
 import qualified Data.Text as T
 
@@ -43,22 +57,17 @@ showC (CurrencyConfig _ sk sn sm) d =
     T.intercalate " " $ if null noZeros then [sm <> "0"] else noZeros
 
 
-parseUserFieldCommand :: T.Text -> Interaction -> Maybe OptionsData -> Either T.Text UserId
-parseUserFieldCommand cmdName (InteractionApplicationCommand {}) opts = do
+parseUserFieldCommand :: T.Text -> SlashCommandInteraction -> Maybe OptionsData -> Either T.Text UserId
+parseUserFieldCommand cmdName _ opts = do
   optValues <- extractOptionsData cmdName opts
   extractField extractUserOption "user" cmdName optValues
 
-parseUserFieldCommand _ _ _ = Left "Tried to parse a user field in a non application command interaction."
 
-
-parsePayCommand :: Interaction -> Maybe OptionsData -> Either T.Text PayCommandData
+parsePayCommand :: SlashCommandInteraction -> Maybe OptionsData -> Either T.Text PayCommandData
 parsePayCommand
-  InteractionApplicationCommand
-  { applicationCommandData = cmdData
-  , interactionUser
-  }
+  (SlashCommandInteraction _ (ChannelData { interactionUser }) cmdData)
   opts = do
-  let cmdName = applicationCommandDataName cmdData
+  let cmdName = cmdData.applicationCommandDataName
 
   optValues <- extractOptionsData cmdName opts
   payTo  <- extractField extractUserOption "pay_to" cmdName optValues
@@ -72,9 +81,6 @@ parsePayCommand
       { payFromUser = uid
       , payToUser = payTo
       , payAmount = amount }
-
-parsePayCommand _ _ = Left "Tried to parse a pay command on an interaction that is not an application command."
-
 
 createPaymentResponse :: DBConnection -> CurrencyConfig -> Either T.Text PayCommandData -> IO InteractionResponse
 createPaymentResponse dbconn ccfg pcd =
@@ -142,14 +148,14 @@ payCommand :: DBConnection -> Config -> BotCommand
 payCommand dbconn cfg = SlashCommand
   { commandName = "pay"
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common _ _) opts -> do
       let pcd = parsePayCommand intr opts :: Either T.Text PayCommandData
       botReply <- liftIO $ createPaymentResponse dbconn (cfgCurrencyInfo cfg) pcd
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           botReply
 
       -- TODO: Database stuff
@@ -173,14 +179,14 @@ viewCurrencyCommand :: DBConnection -> Config -> BotCommand
 viewCurrencyCommand dbconn cfg = SlashCommand
   { commandName = "viewcurrency"
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common _ _) opts -> do
       let uid = parseUserFieldCommand "viewcurrency" intr opts
       botReply <- liftIO $ createViewCurrencyResponse dbconn (cfgCurrencyInfo cfg) uid
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           botReply
   }
     where
@@ -203,12 +209,12 @@ viewRichestUsersCommand dbconn cfg =
   in  SlashCommand
         { commandName = "rich"
         , commandRegistration = createChatInput "rich" ("View the users with the most " <> cn)
-        , slashCommandHandler = \intr _ -> do
+        , slashCommandHandler = \(SlashCommandInteraction common _ _) _ -> do
             botReply <- liftIO $ createViewRichestUsersResponse dbconn (cfgCurrencyInfo cfg)
             void . restCall $
               R.CreateInteractionResponse
-                (interactionId intr)
-                (interactionToken intr)
+                common.interactionId
+                common.interactionToken
                 botReply
         }
 
@@ -217,13 +223,13 @@ viewEmojisCommand :: DBConnection -> BotCommand
 viewEmojisCommand dbconn = SlashCommand
   { commandName = "viewemojis"
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common _ _) opts -> do
       let uid = parseUserFieldCommand "viewemojis" intr opts
       botReply <- liftIO $ createViewEmojisResponse dbconn uid
       void . restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           botReply 
   }
     where

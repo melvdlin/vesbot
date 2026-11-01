@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Vesbot.Currency.Database where
 
 import Vesbot.Utils (showT, forM_)

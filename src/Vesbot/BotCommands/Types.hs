@@ -1,5 +1,9 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+
 module Vesbot.BotCommands.Types
   ( BotCommand(..)
+  , SlashCommandInteraction(..)
+  , MessageCommandInteraction(..)
   , basicSlashCommand
   ) where
 
@@ -11,17 +15,29 @@ import Discord.Internal.Types.Interactions
 import qualified Discord.Requests as R
 
 import qualified Data.Text as T
+import qualified DiscordWrapper.Discord.Internal.Types.Interactions.Interaction as Interaction
+import qualified DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel as Interaction.Channel
+
+data SlashCommandInteraction = SlashCommandInteraction
+  Interaction.Common
+  Interaction.Channel.ChannelData
+  ApplicationCommandData
+
+data MessageCommandInteraction = MessageCommandInteraction
+  Interaction.Common
+  Interaction.Channel.ChannelData
+  ApplicationCommandData
 
 data BotCommand
   = SlashCommand
       { commandName :: T.Text
       , commandRegistration :: Maybe CreateApplicationCommand
-      , slashCommandHandler :: Interaction -> Maybe OptionsData -> DiscordHandler ()
+      , slashCommandHandler :: SlashCommandInteraction -> Maybe OptionsData -> DiscordHandler ()
       }
   | MessageCommand
       { commandName :: T.Text
       , commandRegistration :: Maybe CreateApplicationCommand
-      , messageCommandHandler :: Interaction -> DiscordHandler ()
+      , messageCommandHandler :: MessageCommandInteraction -> DiscordHandler ()
       }
 
 -- | Constructor for a basic slash command with no options.
@@ -34,11 +50,11 @@ basicSlashCommand name regDesc statefulText
   = SlashCommand
     { commandName = name
     , commandRegistration = createChatInput name regDesc --createChatInput is from Discord.Internal.Types.ApplicationCommands
-    , slashCommandHandler = \intr _ -> do
+    , slashCommandHandler = \(SlashCommandInteraction common _ _) _ -> do
         iomessage <- liftIO statefulText
         void . restCall $
           R.CreateInteractionResponse
-            (interactionId intr)
-            (interactionToken intr)
+            common.interactionId
+            common.interactionToken
             (interactionResponseBasic iomessage)
     }

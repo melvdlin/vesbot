@@ -24,6 +24,12 @@ library
   import:           warnings
   hs-source-dirs:   src
   exposed-modules:
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction,
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind,
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Free,
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Free.Kind,
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel,
+    DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel.Kind,
     Vesbot.Handler,
     Vesbot.Logging,
     Vesbot.Config,

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Vesbot.BotCommands
   ( BotCommand(..)
   , slashCommands
@@ -19,6 +20,9 @@ import Vesbot.Currency.Database (updateEmojis)
 import Vesbot.Currency.Commands (viewCurrencyCommand, payCommand, viewRichestUsersCommand, viewEmojisCommand)
 import Vesbot.Reminders.Commands (setReminder)
 import Vesbot.Responses (RareEmoji(..), selectNRandomRareEmojis )
+
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction.Kind.Channel
+import DiscordWrapper.Discord.Internal.Types.Interactions.Interaction
 
 import Discord
 import Discord.Types
@@ -93,22 +97,21 @@ glorp =
               <> "I⠄⠄⠄⠄⠄⣼⣿⣿⣿⣿⣿⣿⡿⢿⡿⣿⢿⣟⣛⣿⣷⣿⣿⣿⣂⠄⠄I\n"
               <> "I⠄⠄⠄⠄⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠄I\n"
 
-
 roll :: BotCommand
 roll = SlashCommand
   { commandName = cmdName
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common channelData _) opts -> do
     let intOrErr = parseCommand intr opts
     case intOrErr of
       Left err -> do
         void . restCall $
           R.CreateInteractionResponse
-            (interactionId intr)
-            (interactionToken intr)
+            common.interactionId
+            common.interactionToken
             (ephemeralResponseBasic err) 
       Right n -> do
-        mUsr <- liftIO $ tryToGetUser (interactionUser intr) -- this command is only going to work for guild members
+        mUsr <- liftIO $ tryToGetUser channelData.interactionUser -- this command is only going to work for guild members
         case mUsr of
           Nothing -> return ()
           Just _ -> do
@@ -127,12 +130,11 @@ roll = SlashCommand
         Nothing
         (Just False)
 
-    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text Integer
-    parseCommand InteractionApplicationCommand {} opts = do
+    parseCommand :: SlashCommandInteraction -> Maybe OptionsData -> Either T.Text Integer
+    parseCommand (SlashCommandInteraction {}) opts = do
       optValues <- extractOptionsData cmdName opts
       extractField extractIntegerOption "n" cmdName optValues
-    parseCommand _ _ = Left "Tried to parse a non slash command on an interaction that is not an application command."
-
+      
     tryToGetUser :: MemberOrUser -> IO (Maybe User)
     tryToGetUser mou = case mou of
       MemberOrUser (Right _) -> do
@@ -148,16 +150,16 @@ roll = SlashCommand
             return Nothing
           Just u -> return (Just u)
 
-    sendRollReply :: Integer -> Interaction -> DiscordHandler ()
-    sendRollReply n intr = do
+    sendRollReply :: Integer -> SlashCommandInteraction -> DiscordHandler ()
+    sendRollReply n (SlashCommandInteraction common _ _) = do
       rand <- liftIO $ uniformRM (1, n) globalStdGen :: DiscordHandler Integer
       let response = "You rolled a " <> showT rand <> " on the " <> "d" <> showT n <> "."
       Logging.log Info $ "User rolled a " <> "d" <> showT n <> " with the roll command and rolled a " <> showT rand <> "."
 
       res <- restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           (interactionResponseBasic response)
       case res of
         Left err ->
@@ -169,17 +171,17 @@ gamble :: Config -> Env -> BotCommand
 gamble cfg env = SlashCommand
   { commandName = cmdName
   , commandRegistration = Just reg
-  , slashCommandHandler = \intr opts -> do
+  , slashCommandHandler = \intr@(SlashCommandInteraction common channelData cmdData) opts -> do
     let intOrErr = parseCommand intr opts
     case intOrErr of
       Left err -> do
         void . restCall $
           R.CreateInteractionResponse
-            (interactionId intr)
-            (interactionToken intr)
+            common.interactionId
+            common.interactionToken
             (ephemeralResponseBasic err) 
       Right (n, mCall) -> do
-        mUsr <- liftIO $ tryToGetUser (interactionUser intr) -- this command is only going to work for guild members
+        mUsr <- liftIO $ tryToGetUser channelData.interactionUser -- this command is only going to work for guild members
         case mUsr of
           Nothing -> return ()
           Just usr -> do
@@ -207,13 +209,12 @@ gamble cfg env = SlashCommand
         Nothing
         (Just False)
 
-    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text (Integer, Maybe Integer)
-    parseCommand InteractionApplicationCommand {} opts = do
+    parseCommand :: SlashCommandInteraction -> Maybe OptionsData -> Either T.Text (Integer, Maybe Integer)
+    parseCommand (SlashCommandInteraction {}) opts = do
       optValues <- extractOptionsData cmdName opts
       n <- extractField extractIntegerOption "n" cmdName optValues
       let call = extractIntegerOption "call" optValues
       return (n, call)
-    parseCommand _ _ = Left "Tried to parse a non slash command on an interaction that is not an application command."
 
     tryToGetUser :: MemberOrUser -> IO (Maybe User)
     tryToGetUser mou = case mou of
@@ -230,8 +231,8 @@ gamble cfg env = SlashCommand
             return Nothing
           Just u -> return (Just u)
 
-    rollResponse :: Integer -> Maybe Integer -> Interaction -> DiscordHandler Integer
-    rollResponse n mCall intr = do
+    rollResponse :: Integer -> Maybe Integer -> SlashCommandInteraction -> DiscordHandler Integer
+    rollResponse n mCall (SlashCommandInteraction common _ _) = do
       rand <- liftIO $ uniformRM (1, n) globalStdGen :: DiscordHandler Integer
       let response = case mCall of
             Nothing -> "You rolled a " <> showT rand <> " on the " <> "d" <> showT n <> "."
@@ -239,8 +240,8 @@ gamble cfg env = SlashCommand
                       showT rand <> "."
       res <- restCall $
         R.CreateInteractionResponse
-          (interactionId intr)
-          (interactionToken intr)
+          common.interactionId
+          common.interactionToken
           (interactionResponseBasic response)
       case res of
         Left err ->
@@ -256,11 +257,11 @@ gamble cfg env = SlashCommand
 
     computePayout n = fromInteger (n `div` 20)
 
-    onWin intr uid n mCall = do
-      let iTok = interactionToken intr
+    onWin (SlashCommandInteraction common _ _) uid n mCall = do
+      let iTok = common.interactionToken
       maybeMsg <- restCall $ -- get the message the bot responded with.
         R.GetOriginalInteractionResponse
-        (interactionApplicationId intr)
+        common.interactionApplicationId
         iTok
       case maybeMsg of
         Left err ->
