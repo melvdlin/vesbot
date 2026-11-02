@@ -12,6 +12,9 @@ module Vesbot.Utils
   , traverse_
   , ephemeralResponseBasic
   , maybeToEither
+  , left
+  , right
+  , findJust
   , announce
   , sendMessage
   , reactToMessage
@@ -28,9 +31,10 @@ import qualified Data.Text as T
 
 import Control.Monad.IO.Class (liftIO)
 import UnliftIO.Concurrent (forkIO, threadDelay)
-import Control.Monad (void, forM, forM_)
+import Control.Monad (void, forM, forM_, join)
 import Data.List (find)
 import Data.Foldable (traverse_)
+import Data.Maybe (isJust)
 
 
 showT :: Show a => a -> T.Text
@@ -45,6 +49,14 @@ maybeToEither :: a -> Maybe b -> Either a b
 maybeToEither err Nothing = Left err
 maybeToEither _ (Just x) = Right x
 
+left :: Either a b -> Maybe a
+left = either Just (const Nothing)
+
+right :: Either a b -> Maybe b
+right = either (const Nothing) Just
+
+findJust :: Foldable t => t (Maybe a) -> Maybe a
+findJust = join . find isJust
 
 -- | make a message ephemeral
 makeEphemeral :: InteractionResponseMessage -> InteractionResponse
