@@ -14,10 +14,11 @@ import Data.Attoparsec.Combinator ((<?>))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Attoparsec.ByteString as Atto
 import qualified Data.Attoparsec.ByteString.Char8 as Atto
-import qualified Data.List as List (intersperse)
+import qualified Data.List as List (intersperse, intercalate)
 
 import System.Random (SplitGen, uniformR)
 import Control.Monad (when)
+import Data.Maybe (fromMaybe, listToMaybe)
 
 data Expr
     = UnaryExpr  UnaryExpr
@@ -126,34 +127,35 @@ evalConst (RolledConst n) = n
 
 
 parse :: Atto.Parser Expr
-parse = parseExpr 0 ["parse"] <* Atto.endOfInput 
+parse = parseExpr 0 [Frame "parse" []] <* Atto.endOfInput 
 
 -- TODO: figure out proper backtracking
 
-parseExpr :: Int -> [String] -> Atto.Parser Expr
-parseExpr minPrecedence stack = let
-    stack' = "expr":stack in
+parseExpr :: Int -> [ParseFrame] -> Atto.Parser Expr
+parseExpr minPrecedence stack = let stack' = pushFrame "expr" [show minPrecedence] stack in
     trace stack' $
     label "expression" $
-    parseGrouped    (parseExpr 0) stack'                  <|>
-    UnaryExpr    <$> parseUnaryExpr stack'                <|>
-    BinExpr      <$> parseBinExpr minPrecedence stack'    <|>
-    DivExpr      <$> parseDivExpr minPrecedence stack'    <|>
+    parseGrouped    (parseExpr 0)                  stack' <|>
+    UnaryExpr    <$> parseUnaryExpr                stack' <|>
+    BinExpr      <$> parseBinExpr    minPrecedence stack' <|>
+    DivExpr      <$> parseDivExpr    minPrecedence stack' <|>
     RepeatExpr   <$> parseRepeatExpr minPrecedence stack' <|>
-    DieExpr      <$> parseDieExpr stack'                  <|>
-    ConstExpr    <$> parseConstExpr stack'
+    DieExpr      <$> parseDieExpr                  stack' <|>
+    ConstExpr    <$> parseConstExpr                stack'
     
 
 -- Always consumes input or fails
-parseProgressiveExpr :: [String] -> Atto.Parser Expr
-parseProgressiveExpr stack = let stack' = "progressiveExpr":stack in
+parseProgressiveExpr :: [ParseFrame] -> Atto.Parser Expr
+parseProgressiveExpr stack =
+    let stack' = pushFrame "progressiveExpr" [] stack in
     trace stack' $
     parseGrouped    (parseExpr 0)   stack' <|>
     ConstExpr    <$> parseConstExpr stack' <|>
     DieExpr      <$> parseDieExpr   stack'
 
-parseGrouped :: ([String] -> Atto.Parser a) -> [String] -> Atto.Parser a
-parseGrouped p stack = let stack' = "grouped":stack in
+parseGrouped :: Show a => ([ParseFrame] -> Atto.Parser a) -> [ParseFrame] -> Atto.Parser a
+parseGrouped p stack =
+    let stack' = pushFrame "grouped" [] stack in
     trace stack' $
     label "grouped expression" $ do
     _ <- label ")" (Atto.string "(")
@@ -164,8 +166,9 @@ parseGrouped p stack = let stack' = "grouped":stack in
     return e
 
 {-# ANN parseUnaryExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseUnaryExpr :: [String] -> Atto.Parser UnaryExpr
-parseUnaryExpr stack = let stack' = "unaryExpr":stack in
+parseUnaryExpr :: [ParseFrame] -> Atto.Parser UnaryExpr
+parseUnaryExpr stack =
+    let stack' = pushFrame "unaryExpr" [] stack in
     trace stack' $
     label "unary expression" $ do
     op <- parseUnaryOp stack'
@@ -173,15 +176,17 @@ parseUnaryExpr stack = let stack' = "unaryExpr":stack in
     e  <- parseProgressiveExpr stack'
     return $ Unary op e
 
-parseUnaryOp :: [String] -> Atto.Parser UnaryOp
-parseUnaryOp stack = let stack' = "unaryOp":stack in
+parseUnaryOp :: [ParseFrame] -> Atto.Parser UnaryOp
+parseUnaryOp stack =
+    let stack' = pushFrame "unaryOp" [] stack in
     trace stack' $
     label "unary operator" $ do
     Neg <$ Atto.string "-"
 
 {-# ANN parseBinExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseBinExpr :: Int -> [String] -> Atto.Parser BinExpr
-parseBinExpr minPrecedence stack = let stack' = "binExpr":stack in
+parseBinExpr :: Int -> [ParseFrame] -> Atto.Parser BinExpr
+parseBinExpr minPrecedence stack =
+    let stack' = pushFrame "binExpr" [show minPrecedence] stack in
     trace stack' $
     label "binary expression" $ do
     left  <-  parseProgressiveExpr stack'
@@ -189,8 +194,9 @@ parseBinExpr minPrecedence stack = let stack' = "binExpr":stack in
     parseBinExpr' left minPrecedence stack'
 
 
-parseBinExpr' :: Expr -> Int -> [String] -> Atto.Parser BinExpr
-parseBinExpr' left minPrecedence stack = let stack' = "binExpr'":stack in
+parseBinExpr' :: Expr -> Int -> [ParseFrame] -> Atto.Parser BinExpr
+parseBinExpr' left minPrecedence stack =
+    let stack' = pushFrame "binExpr'" [show left, show minPrecedence] stack in
     trace stack' $ do
     op    <- parseBinOp stack'
     when (binOpPrecedence op < minPrecedence)
@@ -200,8 +206,9 @@ parseBinExpr' left minPrecedence stack = let stack' = "binExpr'":stack in
     let e = Bin op left right
     parseBinExpr' (BinExpr e) minPrecedence stack' <|> return e
 
-parseBinOp :: [String] -> Atto.Parser BinOp
-parseBinOp stack = let stack' = "binOp":stack in
+parseBinOp :: [ParseFrame] -> Atto.Parser BinOp
+parseBinOp stack =
+    let stack' = pushFrame "binOp" [] stack in
     trace stack' $
     label "binary operator" $
     (Add <$ Atto.string "+") <|>
@@ -209,8 +216,9 @@ parseBinOp stack = let stack' = "binOp":stack in
     (Mul <$ Atto.string "*")
 
 {-# ANN parseDivExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseDivExpr :: Int -> [String] -> Atto.Parser DivExpr
-parseDivExpr minPrecedence stack = let stack' = "divExpr":stack in
+parseDivExpr :: Int -> [ParseFrame] -> Atto.Parser DivExpr
+parseDivExpr minPrecedence stack =
+    let stack' = pushFrame "divExpr" [show minPrecedence] stack in
     trace stack' $
     label "division expression" $ do
     left <- parseProgressiveExpr stack'
@@ -223,8 +231,9 @@ parseDivExpr minPrecedence stack = let stack' = "divExpr":stack in
     return $ Div left right
 
 {-# ANN parseRepeatExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseRepeatExpr :: Int -> [String] -> Atto.Parser RepeatExpr
-parseRepeatExpr minPrecedence stack = let stack' = "repeatExpr":stack in
+parseRepeatExpr :: Int -> [ParseFrame] -> Atto.Parser RepeatExpr
+parseRepeatExpr minPrecedence stack =
+    let stack' = pushFrame "repeatExpr" [show minPrecedence] stack in
     trace stack' $ 
     label "repeat expression" $ do
     left  <- parseProgressiveExpr stack'
@@ -233,8 +242,9 @@ parseRepeatExpr minPrecedence stack = let stack' = "repeatExpr":stack in
     return $ Repeat left right
 
 {-# ANN parseDieExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseDieExpr :: [String] -> Atto.Parser DieExpr
-parseDieExpr stack = let stack' = "dieExpr":stack in
+parseDieExpr :: [ParseFrame] -> Atto.Parser DieExpr
+parseDieExpr stack =
+    let stack' = pushFrame "dieExpr" [] stack in
     trace stack' $ 
     label "die expression" $ do
     _ <- (Atto.string "d" <?> "d") <|> (Atto.string "D" <?> "D")
@@ -242,27 +252,31 @@ parseDieExpr stack = let stack' = "dieExpr":stack in
     return $ Die n
 
 {-# ANN parseConstExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseConstExpr :: [String] -> Atto.Parser ConstExpr
-parseConstExpr stack = let stack' = "constExpr":stack in
+parseConstExpr :: [ParseFrame] -> Atto.Parser ConstExpr
+parseConstExpr stack =
+    let stack' = pushFrame "constExpr" [] stack in
     trace stack'  $
     label "constant expression" $ do
     n <- parseConst stack'
     return $ Const n
 
-parseNonZeroConstExpr :: [String] -> Atto.Parser ConstExpr
-parseNonZeroConstExpr stack = let stack' = "nonZeroConstExpr":stack in
+parseNonZeroConstExpr :: [ParseFrame] -> Atto.Parser ConstExpr
+parseNonZeroConstExpr stack =
+    let stack' = pushFrame "nonZeroConstExpr" [] stack in
     trace stack' $ Const <$> parseNonZeroConst stack'
 
-parseNonZeroConst :: [String] -> Atto.Parser Int
-parseNonZeroConst stack = let stack' = "nonZeroConst":stack in
+parseNonZeroConst :: [ParseFrame] -> Atto.Parser Int
+parseNonZeroConst stack =
+    let stack' = pushFrame "nonZeroConst" [] stack in
     trace stack' $
     label "non-zero constant" $ do
     n <- parseConst stack'
     when (n == 0) (fail "constant is zero")
     return n
 
-parseConst :: [String] -> Atto.Parser Int
-parseConst stack = let stack' = "const":stack in
+parseConst :: [ParseFrame] -> Atto.Parser Int
+parseConst stack =
+    let stack' = pushFrame "const" [] stack in
     trace stack' $
     label "constant" $ do
     sign <- (-1 <$ Atto.string "-") <|> return 1
@@ -272,24 +286,31 @@ parseConst stack = let stack' = "const":stack in
 parseTest :: String -> Atto.Parser a -> Either String a
 parseTest s p = Atto.parseOnly p $ BS.pack s
 
-trace :: [String] -> Atto.Parser a -> Atto.Parser a
+data ParseFrame = Frame String [String]
+pushFrame :: String -> [String] -> [ParseFrame] -> [ParseFrame]
+pushFrame name args stack = Frame name args : stack
+
+trace :: Show a => [ParseFrame] -> Atto.Parser a -> Atto.Parser a
 trace stack p = do
-    let stackMsg = padLeft ' ' 3 (show (length stack)) <> " " <> foldr (flip (<>)) "" (List.intersperse "." stack)
-    let nextMsg = maybe "" (": next: " <>)
-    next <- nextChar
-    _ <- traceMsg $ stackMsg <> nextMsg next
+    let names = (\(Frame name _) -> name) <$> reverse stack
+    let args = maybe [] (\ (Frame _ a) -> a) (listToMaybe stack)
+    let depth = padLeft ' ' 3 . show . length $ stack
+    let stackMsg = depth <> " " <> List.intercalate "." names
+    let nextMsg = maybe ["EOI"] pure
+    pre <- nextChunk
+    let preMsg = unwords (stackMsg : args ++ nextMsg pre)
+    _ <- traceMsg preMsg
     r <- p <|> do
-        next' <- nextChar
-        _ <- traceMsg $ stackMsg <> nextMsg next' <> ": failure"
+        _ <- traceMsg $ preMsg <> ": failure "
         fail ""
-    next' <- nextChar
-    _ <- traceMsg $ stackMsg <> nextMsg next' <> ": success"
+    post <- nextChunk
+    _ <- traceMsg $ preMsg <> ": success: " <> unwords (show r : nextMsg post)
     return r
 
-nextChar :: Atto.Parser (Maybe String)
-nextChar = do
-    next <- Atto.peekWord8
-    return $ show . w2c <$> next
+nextChunk :: Atto.Parser (Maybe String)
+nextChunk = do
+    next <- Atto.getChunk
+    return $ show <$> next
 
 traceMsg :: String -> Atto.Parser ()
 traceMsg msg = do
