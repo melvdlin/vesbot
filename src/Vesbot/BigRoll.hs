@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE Rank2Types #-}
 {- HLint ignore "Use newtype instead of data" -}
 
 module Vesbot.BigRoll (
@@ -9,16 +10,15 @@ module Vesbot.BigRoll (
 import Control.Applicative ((<|>))
 
 import qualified Debug.Trace (trace)
-import Data.ByteString.Internal (w2c)
 import Data.Attoparsec.Combinator ((<?>))
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Attoparsec.ByteString as Atto
 import qualified Data.Attoparsec.ByteString.Char8 as Atto
-import qualified Data.List as List (intersperse, intercalate)
+import qualified Data.List as List (intercalate)
 
 import System.Random (SplitGen, uniformR)
 import Control.Monad (when)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (listToMaybe)
 
 data Expr
     = UnaryExpr  UnaryExpr
@@ -126,12 +126,15 @@ evalConst :: RolledConstExpr -> Int
 evalConst (RolledConst n) = n
 
 
-parse :: Atto.Parser Expr
-parse = parseExpr 0 [Frame "parse" []] <* Atto.endOfInput 
+parse :: Trace -> Atto.Parser Expr
+parse stack =
+    let stack' = pushFrame "parse" [] stack in
+    trace stack' $
+    parseExpr 0 stack' <* Atto.endOfInput 
 
 -- TODO: figure out proper backtracking
 
-parseExpr :: Int -> [ParseFrame] -> Atto.Parser Expr
+parseExpr :: Int -> Trace -> Atto.Parser Expr
 parseExpr minPrecedence stack = let stack' = pushFrame "expr" [show minPrecedence] stack in
     trace stack' $
     label "expression" $
@@ -145,15 +148,16 @@ parseExpr minPrecedence stack = let stack' = pushFrame "expr" [show minPrecedenc
     
 
 -- Always consumes input or fails
-parseProgressiveExpr :: [ParseFrame] -> Atto.Parser Expr
+parseProgressiveExpr :: Trace -> Atto.Parser Expr
 parseProgressiveExpr stack =
     let stack' = pushFrame "progressiveExpr" [] stack in
     trace stack' $
     parseGrouped    (parseExpr 0)   stack' <|>
-    ConstExpr    <$> parseConstExpr stack' <|>
-    DieExpr      <$> parseDieExpr   stack'
+    UnaryExpr    <$> parseUnaryExpr stack' <|>
+    DieExpr      <$> parseDieExpr   stack' <|>
+    ConstExpr    <$> parseConstExpr stack'
 
-parseGrouped :: Show a => ([ParseFrame] -> Atto.Parser a) -> [ParseFrame] -> Atto.Parser a
+parseGrouped :: Show a => (Trace -> Atto.Parser a) -> Trace -> Atto.Parser a
 parseGrouped p stack =
     let stack' = pushFrame "grouped" [] stack in
     trace stack' $
@@ -166,7 +170,7 @@ parseGrouped p stack =
     return e
 
 {-# ANN parseUnaryExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseUnaryExpr :: [ParseFrame] -> Atto.Parser UnaryExpr
+parseUnaryExpr :: Trace -> Atto.Parser UnaryExpr
 parseUnaryExpr stack =
     let stack' = pushFrame "unaryExpr" [] stack in
     trace stack' $
@@ -176,7 +180,7 @@ parseUnaryExpr stack =
     e  <- parseProgressiveExpr stack'
     return $ Unary op e
 
-parseUnaryOp :: [ParseFrame] -> Atto.Parser UnaryOp
+parseUnaryOp :: Trace -> Atto.Parser UnaryOp
 parseUnaryOp stack =
     let stack' = pushFrame "unaryOp" [] stack in
     trace stack' $
@@ -184,29 +188,28 @@ parseUnaryOp stack =
     Neg <$ Atto.string "-"
 
 {-# ANN parseBinExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseBinExpr :: Int -> [ParseFrame] -> Atto.Parser BinExpr
+parseBinExpr :: Int -> Trace -> Atto.Parser BinExpr
 parseBinExpr minPrecedence stack =
     let stack' = pushFrame "binExpr" [show minPrecedence] stack in
     trace stack' $
     label "binary expression" $ do
     left  <-  parseProgressiveExpr stack'
-    Atto.skipSpace
     parseBinExpr' left minPrecedence stack'
 
 
-parseBinExpr' :: Expr -> Int -> [ParseFrame] -> Atto.Parser BinExpr
+parseBinExpr' :: Expr -> Int -> Trace -> Atto.Parser BinExpr
 parseBinExpr' left minPrecedence stack =
     let stack' = pushFrame "binExpr'" [show left, show minPrecedence] stack in
     trace stack' $ do
+    Atto.skipSpace
     op    <- parseBinOp stack'
-    when (binOpPrecedence op < minPrecedence)
-         (do _ <- traceMsg "failure: precedence"; fail "precedence")
+    checkPrecedence minPrecedence (binOpPrecedence op) 
     Atto.skipSpace
     right <- parseExpr (binOpPrecedence op + 1) stack'
     let e = Bin op left right
     parseBinExpr' (BinExpr e) minPrecedence stack' <|> return e
 
-parseBinOp :: [ParseFrame] -> Atto.Parser BinOp
+parseBinOp :: Trace -> Atto.Parser BinOp
 parseBinOp stack =
     let stack' = pushFrame "binOp" [] stack in
     trace stack' $
@@ -216,7 +219,7 @@ parseBinOp stack =
     (Mul <$ Atto.string "*")
 
 {-# ANN parseDivExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseDivExpr :: Int -> [ParseFrame] -> Atto.Parser DivExpr
+parseDivExpr :: Int -> Trace -> Atto.Parser DivExpr
 parseDivExpr minPrecedence stack =
     let stack' = pushFrame "divExpr" [show minPrecedence] stack in
     trace stack' $
@@ -224,14 +227,19 @@ parseDivExpr minPrecedence stack =
     left <- parseProgressiveExpr stack'
     Atto.skipSpace
     _ <- Atto.string "/"
-    when (divOpPrecedence < minPrecedence)
-         (do _ <- traceMsg "failure: precedence"; fail "precedence")
+    checkPrecedence minPrecedence divOpPrecedence
     Atto.skipSpace
     right <- parseNonZeroConstExpr stack'
     return $ Div left right
 
+checkPrecedence :: Int -> Int -> Atto.Parser ()
+checkPrecedence minPrecedence  precedence =
+    when (precedence < minPrecedence) $ do
+        _ <- traceMsg $ unwords ["failure:", "precedence", show precedence, "<", show minPrecedence]
+        fail "precedence"
+
 {-# ANN parseRepeatExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseRepeatExpr :: Int -> [ParseFrame] -> Atto.Parser RepeatExpr
+parseRepeatExpr :: Int -> Trace -> Atto.Parser RepeatExpr
 parseRepeatExpr minPrecedence stack =
     let stack' = pushFrame "repeatExpr" [show minPrecedence] stack in
     trace stack' $ 
@@ -242,7 +250,7 @@ parseRepeatExpr minPrecedence stack =
     return $ Repeat left right
 
 {-# ANN parseDieExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseDieExpr :: [ParseFrame] -> Atto.Parser DieExpr
+parseDieExpr :: Trace -> Atto.Parser DieExpr
 parseDieExpr stack =
     let stack' = pushFrame "dieExpr" [] stack in
     trace stack' $ 
@@ -252,7 +260,7 @@ parseDieExpr stack =
     return $ Die n
 
 {-# ANN parseConstExpr ( "HLint: ignore Use <$>" :: String ) #-}
-parseConstExpr :: [ParseFrame] -> Atto.Parser ConstExpr
+parseConstExpr :: Trace -> Atto.Parser ConstExpr
 parseConstExpr stack =
     let stack' = pushFrame "constExpr" [] stack in
     trace stack'  $
@@ -260,12 +268,12 @@ parseConstExpr stack =
     n <- parseConst stack'
     return $ Const n
 
-parseNonZeroConstExpr :: [ParseFrame] -> Atto.Parser ConstExpr
+parseNonZeroConstExpr :: Trace -> Atto.Parser ConstExpr
 parseNonZeroConstExpr stack =
     let stack' = pushFrame "nonZeroConstExpr" [] stack in
     trace stack' $ Const <$> parseNonZeroConst stack'
 
-parseNonZeroConst :: [ParseFrame] -> Atto.Parser Int
+parseNonZeroConst :: Trace -> Atto.Parser Int
 parseNonZeroConst stack =
     let stack' = pushFrame "nonZeroConst" [] stack in
     trace stack' $
@@ -274,7 +282,7 @@ parseNonZeroConst stack =
     when (n == 0) (fail "constant is zero")
     return n
 
-parseConst :: [ParseFrame] -> Atto.Parser Int
+parseConst :: Trace -> Atto.Parser Int
 parseConst stack =
     let stack' = pushFrame "const" [] stack in
     trace stack' $
@@ -286,25 +294,44 @@ parseConst stack =
 parseTest :: String -> Atto.Parser a -> Either String a
 parseTest s p = Atto.parseOnly p $ BS.pack s
 
+type TraceFrame = forall a. Show a => [ParseFrame] -> Atto.Parser a -> Atto.Parser a
+data Trace = Trace [ParseFrame] TraceFrame
 data ParseFrame = Frame String [String]
-pushFrame :: String -> [String] -> [ParseFrame] -> [ParseFrame]
-pushFrame name args stack = Frame name args : stack
 
-trace :: Show a => [ParseFrame] -> Atto.Parser a -> Atto.Parser a
-trace stack p = do
+newTrace :: TraceFrame -> Trace
+newTrace = Trace []
+pushFrame :: String -> [String] -> Trace -> Trace
+pushFrame name args (Trace stack f) = Trace (Frame name args : stack) f
+frameName :: ParseFrame -> String
+frameName (Frame name _) = name
+frameArgs :: ParseFrame -> [String]
+frameArgs (Frame _ args) = args
+
+trace :: Show a => Trace -> Atto.Parser a -> Atto.Parser a
+trace (Trace stack f) = f stack
+
+noopTrace :: Show a => [ParseFrame] -> Atto.Parser a -> Atto.Parser a
+noopTrace = const id
+
+traceParser :: Show a => [ParseFrame] -> Atto.Parser a -> Atto.Parser a
+traceParser stack p = do
     let names = (\(Frame name _) -> name) <$> reverse stack
     let args = maybe [] (\ (Frame _ a) -> a) (listToMaybe stack)
     let depth = padLeft ' ' 3 . show . length $ stack
     let stackMsg = depth <> " " <> List.intercalate "." names
+    
     let nextMsg = maybe ["EOI"] pure
     pre <- nextChunk
     let preMsg = unwords (stackMsg : args ++ nextMsg pre)
     _ <- traceMsg preMsg
+    
     r <- p <|> do
         _ <- traceMsg $ preMsg <> ": failure "
         fail ""
+    
     post <- nextChunk
     _ <- traceMsg $ preMsg <> ": success: " <> unwords (show r : nextMsg post)
+    
     return r
 
 nextChunk :: Atto.Parser (Maybe String)
