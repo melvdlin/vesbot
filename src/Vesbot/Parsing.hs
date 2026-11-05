@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 module Vesbot.Parsing where
 
 import Vesbot.Logging as Logging (log, LogType(..))
@@ -10,13 +11,27 @@ import qualified Data.Aeson as AE
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 
+import qualified Text.Megaparsec as P
+import qualified Text.Megaparsec.Char as P
+import qualified Text.Megaparsec.Char.Lexer as P (decimal)
+
+import qualified Data.Void (Void)
+
+import Data.Functor (($>))
+import Control.Applicative ((<|>))
+
 import Data.Time
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
 import Data.Int (Int64)
 import Data.Char (isDigit)
 import Data.Scientific (toRealFloat)
 import Vesbot.Utils (maybeToEither)
+import Control.Monad (when)
+import Data.Either.Extra (mapLeft, eitherToMaybe)
+import Data.Tuple.Extra (first)
+import Data.Maybe (fromMaybe, isNothing)
 
+type Parser s = P.Parsec Data.Void.Void s 
 
 intToUTC :: Int64 -> UTCTime
 intToUTC = posixSecondsToUTCTime . realToFrac
@@ -61,6 +76,141 @@ parseDateInput currTime inpt = case words inpt of
 
   _          -> Nothing
 
+{-# ANN parseDueDate ( "HLint: ignore Redundant return" :: String ) #-}
+parseDueDate :: UTCTime -> T.Text -> OptionsData -> Either T.Text UTCTime
+parseDueDate now cmdName opts = do
+    let rawDue = eitherToMaybe $ extractField extractStringOption "on" cmdName opts
+    let rawOffset = eitherToMaybe $ extractField extractStringOption "in" cmdName opts
+    if isNothing rawDue && isNothing rawOffset
+      then Left "at least one of `on` or `in` must be specified"
+      else do
+        let parseArg p = mapLeft T.pack . p . T.unpack
+        due  <- maybe (Right now) (parseArg $ parseDateTime now "on") rawDue
+        due' <- maybe (Right due) (parseArg $ parseOffset now "in") rawOffset
+        return due'
+
+dateTimeFormat :: String
+dateTimeFormat = "MM-DD-YYYY hh:mm:ss <timezone>"
+offsetFormat :: String
+offsetFormat = "n[m|w|d|h|min]"
+
+parseDateTime :: UTCTime -> String -> String -> Either String UTCTime
+parseDateTime now name s = do
+  (day, time, tz) <- mapLeft displayParseError $ P.parse
+    (P.space *> pDateTime <* P.space <* P.eof)
+    name s
+  let day' = fromMaybe (localDay $ utcToLocalTime tz now) day
+  return $ localTimeToUTC tz $ LocalTime day' time
+
+displayParseError ::
+  ( P.VisualStream s
+  , P.TraversableStream s
+  , P.ShowErrorComponent e
+  ) => P.ParseErrorBundle s e -> String
+displayParseError e = "```\n" <> P.errorBundlePretty e <> "\n```"
+
+parseOffset :: UTCTime -> String -> String -> Either String UTCTime
+parseOffset now name s = do
+  offsets <- mapLeft displayParseError $ P.parse
+    (P.space *> pOffsets <* P.space <* P.eof)
+    name s
+  -- TODO: configurable time zone
+  let tz = utc
+  let (LocalTime day time) = utcToLocalTime tz now
+  let (Offsets m w d h mins) = foldr mergeOffsets (Offsets 0 0 0 0 0) offsets
+  let seconds = 60 * (60 * h + mins)
+  let day' = addGregorianDurationRollOver (CalendarDiffDays m (w * 7 + d)) day
+  let date' = localTimeToUTC tz $ LocalTime day' time
+  let date'' = addUTCTime (fromInteger seconds) date'
+
+  return date''
+
+data Offsets = Offsets
+  -- Months
+  Integer
+  -- Weeks
+  Integer
+  -- Days
+  Integer
+  -- Hours
+  Integer
+  -- Minutes
+  Integer
+data Offset = MonthOffset Integer | WeekOffset Integer | DayOffset Integer | HourOffset Integer | MinuteOffset Integer
+
+mergeOffsets :: Offset -> Offsets -> Offsets
+mergeOffsets (MonthOffset  m'   ) (Offsets m w d h min') = Offsets (m + m') w d h min'
+mergeOffsets (WeekOffset   w'   ) (Offsets m w d h min') = Offsets m (w + w') d h min'
+mergeOffsets (DayOffset    d'   ) (Offsets m w d h min') = Offsets m w (d + d') h min'
+mergeOffsets (HourOffset   h'   ) (Offsets m w d h min') = Offsets m w d (h + h') min'
+mergeOffsets (MinuteOffset min'') (Offsets m w d h min') = Offsets m w d h (min' + min'')
+
+checkRange :: (Ord a, Show a, P.Stream s) => a -> a -> String -> Parser s a -> Parser s a
+checkRange lo hi name p = do
+  x <- p
+  when (x < lo || x > hi) (fail $ unwords [name, "must be between", show lo, "and", show hi])
+  return x
+
+pOffsets :: Parser String [Offset]
+pOffsets = P.sepBy1 pOffset P.space
+
+pOffset :: Parser String Offset
+pOffset = let
+  pUnit :: Parser String (Integer -> Offset)
+  pUnit = (P.string "m"   $> MonthOffset ) <|>
+          (P.string "w"   $> WeekOffset  ) <|>
+          (P.string "d"   $> DayOffset   ) <|>
+          (P.string "h"   $> HourOffset  ) <|>
+          (P.string "min" $> MinuteOffset) 
+  in do
+    n <- P.decimal
+    unit <- pUnit
+    return $ unit n
+
+pDateTime :: Parser String (Maybe Day, TimeOfDay, TimeZone)
+pDateTime = let
+  pDate :: Parser String Day
+  pDate = let
+    pMonth = P.label "month" $ checkRange 1 12 "month" P.decimal 
+    pDay = P.label "day" $ checkRange 1 31 "day" P.decimal 
+    pYear = P.label "year" P.decimal
+   in P.label "date" $ do
+    month <- pMonth
+    _ <- P.string "-"
+    day <- pDay
+    _ <- P.string "-"
+    year <- pYear
+    return $ fromGregorian year month day
+  pTime :: Parser String TimeOfDay
+  pTime = let
+    pHour = P.label "hour" $ checkRange 0 23 "hour" P.decimal 
+    pMinute = P.label "minute" $ checkRange 0 59 "minute" P.decimal
+    pSecond = P.label "second" $ checkRange 0 59 "second" P.decimal
+   in P.label "time of day" $ do
+    hour <- pHour
+    _ <- P.string ":"
+    minute <- pMinute
+    second <- P.string ":" *> pSecond <|> return 0
+    return $ TimeOfDay hour minute second
+  pTimeZone :: Parser String TimeZone
+  pTimeZone = P.label "time zone" $ do
+    s <- P.takeRest
+    if s == ""
+      then return utc
+      else parseTimeM False defaultTimeLocale "%Z" s 
+
+  pDateAndTime = do
+    date <- pDate
+    P.space
+    time <- pTime
+    return (date, time)
+  in do
+    (date, time) <-  P.try (first Just                       <$> pDateAndTime)
+                 <|> P.try (first Just . (, TimeOfDay 0 0 0) <$> pDate       )
+                 <|> P.try (             (Nothing,)          <$> pTime       )
+    P.space
+    tz <- pTimeZone
+    return (date, time, tz)
 
 -- | Extracting otions from command fields
 extractStringOption :: T.Text -> OptionsData -> Maybe T.Text

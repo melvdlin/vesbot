@@ -8,7 +8,13 @@ module Vesbot.Predictions.Commands
 import Vesbot.Utils (showT, maybeToEither, ephemeralResponseBasic, void, liftIO)
 import Vesbot.Config (Env(..))
 import Vesbot.Logging as Logging (log, LogType(..))
-import Vesbot.Parsing (extractNumberOption, extractStringOption, parseDateInput, extractField, utcToInt, getUserData, extractOptionsData)
+import Vesbot.Parsing
+  ( extractNumberOption
+  , extractStringOption
+  , extractField
+  , utcToInt
+  , getUserData
+  , extractOptionsData, parseDueDate, dateTimeFormat, offsetFormat)
 import Vesbot.Actions (Action(..))
 import Vesbot.Predictions.Types
 import Vesbot.Predictions.Database
@@ -27,7 +33,7 @@ import qualified Data.Text as T
 
 parsePredictionCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (PredictionData, ChannelId)
 parsePredictionCommand
-  currTime
+  now
   InteractionApplicationCommand
     { applicationCommandData = cmdData
     , interactionUser
@@ -40,7 +46,6 @@ parsePredictionCommand
     optValues <- extractOptionsData cmdName opts
     let confidence = extractNumberOption "confidence" optValues -- it's ok if it fails since it's optional
     predText <- extractField extractStringOption "prediction" cmdName optValues
-    dueDateText <- extractField extractStringOption "date" cmdName optValues
     _ <- maybeToEither
           "Error accessing Guild ID for the prediction command. Note that this command can only be used in a server."
           interactionGuildId
@@ -52,24 +57,16 @@ parsePredictionCommand
       maybeToEither
         "Could not get user data for the prediction command. Note that this command can only be used in a server."
         (getUserData interactionUser)
-    dueDateUTC <-
-      maybeToEither
-        (T.intercalate "\n"
-          [ "Error parsing prediction date. Here are the formatting options."
-          , "**Relative time:** \"in #w\" or \"in #d\" or \"in #h\" or \"in #m\", where # is a positive integer.\
-          \ \"w\" stands for weeks, \"d\" stands for days, \"h\" stands for hours, and \"m\" stands for minutes."
-          , "**Absolute time:** \"on month-day-year HH:MM <timezone>\", where the timezone is optional.\
-          \If no timezone is entered, the bot will default to UTC. Timezone examples are CST, CDT, EST, etc."
-          ]
-        )
-        (parseDateInput currTime . T.unpack $ dueDateText)
+
+    due <- parseDueDate now cmdName optValues
+        
     return
       ( PredictionData
           { predictionUserId = uid
           , predictionContent = predText
           , predictionConfidence = confidence
-          , predictionMadeDate = currTime
-          , predictionDueDate = dueDateUTC
+          , predictionMadeDate = now
+          , predictionDueDate = due
           }
       , cid
       )
@@ -103,6 +100,7 @@ createInitialPredictionResponse currTime mpcd =
       else
         ephemeralResponseBasic "You can only predict events in the future!"
     Left err -> ephemeralResponseBasic err
+
 
 
 makePrediction :: Env -> BotCommand
@@ -147,7 +145,8 @@ makePrediction env = SlashCommand
   }
     where
       predictionField = OptionValueString "prediction" Nothing "What you are predicting will happen" Nothing True (Left False) (Just 1) Nothing
-      dateField = OptionValueString "date" Nothing "\"in #[w|d|h|m]\" or \"on MM-DD-YYYY HH:MM <timezone>\"" Nothing True (Left False) (Just 1) Nothing
+      onField = OptionValueString "on" Nothing (T.pack dateTimeFormat) Nothing False (Left False) (Just 1) Nothing
+      inField = OptionValueString "in" Nothing (T.pack offsetFormat) Nothing False (Left False) (Just 1) Nothing
       confidenceField =  OptionValueNumber "confidence" Nothing "(Optional) Prediction confidence (ex: 20.4 means 20.4%)" Nothing False (Left False) (Just 0) (Just 100)
       reg = -- Command registration
         CreateApplicationCommandChatInput
@@ -155,6 +154,6 @@ makePrediction env = SlashCommand
           Nothing
           "Predict the future!"
           Nothing
-          (Just $ OptionsValues [predictionField, dateField, confidenceField ])
+          (Just $ OptionsValues [predictionField, onField, inField, confidenceField ])
           Nothing
           (Just False)
