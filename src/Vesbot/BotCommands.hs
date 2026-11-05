@@ -8,7 +8,7 @@ module Vesbot.BotCommands
 
 import Vesbot.Logging as Logging (LogType(..), log)
 import Vesbot.Utils (showT, void, liftIO, ephemeralResponseBasic, forM_, threadDelay, announce)
-import Vesbot.Parsing (extractIntegerOption, extractOptionsData, extractField)
+import Vesbot.Parsing (extractIntegerOption, extractOptionsData, extractField, extractStringOption)
 import Vesbot.Config (Env(..), Config(..))
 import Vesbot.BotCommands.Types
 import Vesbot.ArgumentTimer.Commands (viewAC, resetAC)
@@ -19,6 +19,7 @@ import Vesbot.Currency.Database (updateEmojis)
 import Vesbot.Currency.Commands (viewCurrencyCommand, payCommand, viewRichestUsersCommand, viewEmojisCommand)
 import Vesbot.Reminders.Commands (setReminder)
 import Vesbot.Responses (RareEmoji(..), selectNRandomRareEmojis )
+import qualified Vesbot.BigRoll as Roll
 
 import Discord
 import Discord.Types
@@ -26,9 +27,13 @@ import qualified Discord.Requests as R
 import Discord.Internal.Types.ApplicationCommands
 import Discord.Internal.Types.Interactions
 
+import qualified Data.Either.Extra as Either
+
+import qualified Text.Megaparsec as MP
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Time (getCurrentTime)
-import System.Random.Stateful (uniformRM, globalStdGen)
+import System.Random.Stateful (uniformRM, globalStdGen, getStdRandom)
 import Control.Monad (when)
 
 
@@ -99,38 +104,42 @@ roll = SlashCommand
   { commandName = cmdName
   , commandRegistration = Just reg
   , slashCommandHandler = \intr opts -> do
-    let intOrErr = parseCommand intr opts
-    case intOrErr of
+    let exprOrErr = parseCommand intr opts
+    case exprOrErr of
       Left err -> do
         void . restCall $
           R.CreateInteractionResponse
             (interactionId intr)
             (interactionToken intr)
             (ephemeralResponseBasic err) 
-      Right n -> do
+      Right e -> do
         mUsr <- liftIO $ tryToGetUser (interactionUser intr) -- this command is only going to work for guild members
         case mUsr of
           Nothing -> return ()
           Just _ -> do
-            sendRollReply n intr
+            sendRollReply e intr
   }
   where
     cmdName = "roll"
-    opt = OptionValueInteger "n" Nothing "The number of sides the die has" Nothing True (Left False) (Just 1) Nothing
+    opt = OptionValueString "roll" Nothing "The expression to roll" Nothing True (Left False) (Just 1) Nothing
     reg = -- Command registration
       CreateApplicationCommandChatInput
         cmdName
         Nothing
-        ("Roll an n-sided die and print the result")
+        "Roll some dice"
         Nothing 
         (Just $ OptionsValues [opt])
         Nothing
         (Just False)
 
-    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text Integer
+    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text (Roll.Expr Integer)
     parseCommand InteractionApplicationCommand {} opts = do
       optValues <- extractOptionsData cmdName opts
-      extractField extractIntegerOption "n" cmdName optValues
+      s <- TE.encodeUtf8 <$> extractField extractStringOption "roll" cmdName optValues
+      Either.mapLeft
+        (T.pack . ("```\n" <>) . ("\n```" <>) . MP.errorBundlePretty)
+        (MP.parse Roll.parse "roll" s)
+      
     parseCommand _ _ = Left "Tried to parse a non slash command on an interaction that is not an application command."
 
     tryToGetUser :: MemberOrUser -> IO (Maybe User)
@@ -148,11 +157,14 @@ roll = SlashCommand
             return Nothing
           Just u -> return (Just u)
 
-    sendRollReply :: Integer -> Interaction -> DiscordHandler ()
-    sendRollReply n intr = do
-      rand <- liftIO $ uniformRM (1, n) globalStdGen :: DiscordHandler Integer
-      let response = "You rolled a " <> showT rand <> " on the " <> "d" <> showT n <> "."
-      Logging.log Info $ "User rolled a " <> "d" <> showT n <> " with the roll command and rolled a " <> showT rand <> "."
+    sendRollReply :: Roll.Expr Integer -> Interaction -> DiscordHandler ()
+    sendRollReply e intr = do
+      rolled <- liftIO $ getStdRandom $ Roll.roll e
+      let prettyExpr = Roll.prettyExpr e
+      let pretty = Roll.pretty rolled
+      let result = Roll.eval rolled
+      let response = T.pack $ unwords [pretty, "=", show result]
+      Logging.log Info $ T.pack $ unwords ["User rolled", prettyExpr, "=>", pretty, "=", show result]
 
       res <- restCall $
         R.CreateInteractionResponse

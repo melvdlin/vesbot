@@ -4,21 +4,25 @@
 {- HLint ignore "Use newtype instead of data" -}
 
 module Vesbot.BigRoll (
-    Expr, RolledExpr, roll, eval, parse
+    Expr, RolledExpr, roll, eval, prettyExpr, pretty, parse
 ) where
 
-import Control.Applicative ((<|>))
+import System.Random (SplitGen, uniformR, UniformRange)
+
+import Data.Tuple.Extra (first)
 
 import Data.Void
 import qualified Data.ByteString.Char8 as BS
+
 import Text.Megaparsec ((<?>), try)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Byte as P
 import qualified Text.Megaparsec.Byte.Lexer as P.Lex
+import qualified Data.List as List (intersperse)
 
-import System.Random (SplitGen, uniformR, UniformRange)
 import Control.Monad (when)
 import Data.Functor (($>))
+import Control.Applicative ((<|>))
 
 type Parser = P.Parsec Void BS.ByteString
 
@@ -66,12 +70,12 @@ data RolledDieExpr    a = RolledDie                        a                    
 data RolledConstExpr  a = RolledConst                      a                      deriving (Show, Eq)
 
 roll :: (Num a, Integral a, UniformRange a) => SplitGen g => Expr a -> g -> (RolledExpr a, g)
-roll (UnaryExpr  e) = mapFst RolledUnaryExpr  . rollUnary  e
-roll (BinExpr    e) = mapFst RolledBinExpr    . rollBin    e
-roll (DivExpr    e) = mapFst RolledDivExpr    . rollDiv    e
-roll (RepeatExpr e) = mapFst RolledRepeatExpr . rollRepeat e
-roll (DieExpr    e) = mapFst RolledDieExpr    . rollDie    e
-roll (ConstExpr  e) = mapFst RolledConstExpr  . rollConst  e
+roll (UnaryExpr  e) = first RolledUnaryExpr  . rollUnary  e
+roll (BinExpr    e) = first RolledBinExpr    . rollBin    e
+roll (DivExpr    e) = first RolledDivExpr    . rollDiv    e
+roll (RepeatExpr e) = first RolledRepeatExpr . rollRepeat e
+roll (DieExpr    e) = first RolledDieExpr    . rollDie    e
+roll (ConstExpr  e) = first RolledConstExpr  . rollConst  e
 
 rollUnary :: (Num a, Integral a, UniformRange a) => SplitGen g => UnaryExpr a -> g -> (RolledUnaryExpr a, g)
 rollUnary (Unary op e) rng = let
@@ -104,13 +108,6 @@ rollDie (Die n) rng = let
 rollConst :: SplitGen g => ConstExpr a -> g -> (RolledConstExpr a, g)
 rollConst (Const n) = (RolledConst n,)
 
-mapFst :: (a -> c) -> (a, b) -> (c, b)
-mapFst f (l, r) = (f l, r)
-
-mapSnd :: (b -> c) -> (a, b) -> (a, c)
-mapSnd f (l, r) = (l, f r)
-
-
 eval :: (Num a, Integral a) =>  RolledExpr a -> a
 eval (RolledUnaryExpr  e) = evalUnary  e
 eval (RolledBinExpr    e) = evalBin    e
@@ -134,17 +131,68 @@ evalDie (RolledDie n) = n
 evalConst :: RolledConstExpr a -> a
 evalConst (RolledConst n) = n
 
+pretty :: (Show a) => RolledExpr a -> String
+pretty (RolledUnaryExpr  e) = prettyUnary  e
+pretty (RolledBinExpr    e) = prettyBin    e
+pretty (RolledDivExpr    e) = prettyDiv    e
+pretty (RolledRepeatExpr e) = prettyRepeat e
+pretty (RolledDieExpr    e) = prettyDie    e
+pretty (RolledConstExpr  e) = prettyConst  e
+
+prettyUnary :: (Show a) => RolledUnaryExpr a -> String
+prettyUnary (RolledUnary Neg e) = "-" <> pretty e
+prettyUnaryOp :: UnaryOp -> String
+prettyUnaryOp Neg = "-"
+prettyBin :: (Show a) => RolledBinExpr a -> String
+prettyBin (RolledBin op l r) = unwords [ pretty l, prettyBinOp op, pretty r ]
+prettyBinOp :: BinOp -> String
+prettyBinOp Add = "+"
+prettyBinOp Sub = "-"
+prettyBinOp Mul = "*"
+prettyDiv :: (Show a) => RolledDivExpr a -> String
+prettyDiv (RolledDiv l r) = unwords [ pretty l, "/", prettyConst r ]
+prettyRepeat :: (Show a) => RolledRepeatExpr a -> String
+prettyRepeat (RolledRepeat es) = unwords $ ["("] ++ (List.intersperse "+" . map pretty) es ++ [")"]
+prettyDie :: (Show a) => RolledDieExpr a -> String
+prettyDie (RolledDie n) = "**" <> show n <> "**"
+prettyConst :: (Show a) => RolledConstExpr a -> String
+prettyConst (RolledConst n) = show n
+
+prettyExpr :: (Show a) => Expr a -> String
+prettyExpr e = let
+    prettyExpr' (UnaryExpr  e') = prettyUnaryExpr  e'
+    prettyExpr' (BinExpr    e') = prettyBinExpr    e'
+    prettyExpr' (DivExpr    e') = prettyDivExpr    e'
+    prettyExpr' (RepeatExpr e') = prettyRepeatExpr e'
+    prettyExpr' (DieExpr    e') = prettyDieExpr    e'
+    prettyExpr' (ConstExpr  e') = prettyConstExpr  e'
+    in unwords ["(", prettyExpr' e, ")"]
+
+prettyUnaryExpr  :: (Show a) => UnaryExpr a -> String
+prettyUnaryExpr (Unary op e) = prettyUnaryOp op <> prettyExpr e
+prettyBinExpr    :: (Show a) => BinExpr a -> String
+prettyBinExpr (Bin op l r) = unwords [prettyExpr l, prettyBinOp op, prettyExpr r]
+prettyDivExpr    :: (Show a) => DivExpr a -> String
+prettyDivExpr (Div l r) = unwords [prettyExpr l, "/", prettyConstExpr r]
+prettyRepeatExpr :: (Show a) => RepeatExpr a -> String
+prettyRepeatExpr (Repeat l r) = unwords [prettyExpr l, prettyExpr r]
+prettyDieExpr    :: (Show a) => DieExpr a -> String
+prettyDieExpr (Die n) = "d" <> show n
+prettyConstExpr  :: (Show a) => ConstExpr a -> String
+prettyConstExpr (Const n) = show n
+
+
 {-
-S      -> expr EOF
-expr   -> left right?
-left   -> "(" expr ")" | unary | die | const
-unary  -> unaryOp left
-die    -> "d" decimal | "D" decimal
-const  -> "-"? decimal
-right  -> binary | div | seq
-div    -> "/" nzonst
-binary -> binaryOp expr
-seq    -> expr
+    S      -> expr EOF
+    expr   -> left right?
+    left   -> "(" expr ")" | const | die | unary
+    unary  -> unaryOp left
+    die    -> "d" decimal | "D" decimal
+    const  -> "-"? decimal
+    right  -> binary | div | repeat
+    div    -> "/" nzonst
+    binary -> binaryOp expr
+    repeat    -> expr
 -}
 
 parse :: (Num a, Integral a) =>  Parser (Expr a)
@@ -202,9 +250,9 @@ pConst = do
 
 pRight :: (Num a, Integral a) => Int -> Expr a -> Parser (Expr a)
 pRight prec l =
-    try (BinExpr    <$> pBin prec l ) <|>
-    try (DivExpr    <$> pDiv prec l ) <|>
-    try (RepeatExpr <$> pSeq prec l )
+    try (BinExpr    <$> pBin    prec l ) <|>
+    try (DivExpr    <$> pDiv    prec l ) <|>
+    try (RepeatExpr <$> pRepeat prec l )
 
 pBin :: (Num a, Integral a) =>  Int -> Expr a -> Parser (BinExpr a)
 pBin prec l = do
@@ -251,8 +299,8 @@ checkPrecedence minPrec prec = do
     return prec
 
 
-pSeq :: (Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
-pSeq prec l = do
+pRepeat :: (Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
+pRepeat prec l = do
     r <- pExpr prec
     return $ Repeat l r
 
