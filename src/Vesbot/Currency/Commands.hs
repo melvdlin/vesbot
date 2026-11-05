@@ -42,6 +42,12 @@ showC (CurrencyConfig _ sk sn sm) d =
   in
     T.intercalate " " $ if null noZeros then [sm <> "0"] else noZeros
 
+getUser :: Interaction -> Maybe UserId
+getUser (InteractionComponent                      { interactionUser }) = getUserData interactionUser  
+getUser (InteractionPing                           {                 }) = Nothing  
+getUser (InteractionApplicationCommand             { interactionUser }) = getUserData interactionUser  
+getUser (InteractionApplicationCommandAutocomplete { interactionUser }) = getUserData interactionUser  
+getUser (InteractionModalSubmit                    { interactionUser }) = getUserData interactionUser  
 
 parseUserFieldCommand :: T.Text -> Interaction -> Maybe OptionsData -> Either T.Text UserId
 parseUserFieldCommand cmdName (InteractionApplicationCommand {}) opts = do
@@ -175,7 +181,9 @@ viewCurrencyCommand dbconn cfg = SlashCommand
   , commandRegistration = Just reg
   , slashCommandHandler = \intr opts -> do
       let uid = parseUserFieldCommand "viewcurrency" intr opts
-      botReply <- liftIO $ createViewCurrencyResponse dbconn (cfgCurrencyInfo cfg) uid
+      let self = maybeToEither "viewcurrency: failed to get user" $ getUser intr 
+      let user = either (const self) Right uid
+      botReply <- liftIO $ createViewCurrencyResponse dbconn (cfgCurrencyInfo cfg) user
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
@@ -185,7 +193,7 @@ viewCurrencyCommand dbconn cfg = SlashCommand
   }
     where
       cn = currencyName . cfgCurrencyInfo $ cfg
-      o1 = OptionValueUser "user" Nothing "User to check" Nothing True
+      o1 = OptionValueUser "user" Nothing "User to check. Defaults to self." Nothing False
       reg = -- Command registration
         CreateApplicationCommandChatInput
           "viewcurrency"
@@ -219,7 +227,9 @@ viewEmojisCommand dbconn = SlashCommand
   , commandRegistration = Just reg
   , slashCommandHandler = \intr opts -> do
       let uid = parseUserFieldCommand "viewemojis" intr opts
-      botReply <- liftIO $ createViewEmojisResponse dbconn uid
+      let self = maybeToEither "viewemojis: failed to get user" $ getUser intr 
+      let user = either (const self) Right uid
+      botReply <- liftIO $ createViewEmojisResponse dbconn user
       void . restCall $
         R.CreateInteractionResponse
           (interactionId intr)
@@ -227,7 +237,7 @@ viewEmojisCommand dbconn = SlashCommand
           botReply 
   }
     where
-      o1 = OptionValueUser "user" Nothing "User to check" Nothing True
+      o1 = OptionValueUser "user" Nothing "User to check. Defaults to self." Nothing False
       reg = -- Command registration
         CreateApplicationCommandChatInput
           "viewemojis"
