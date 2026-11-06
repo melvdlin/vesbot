@@ -124,15 +124,15 @@ parseOffset now name s = do
   return date''
 
 data Offsets = Offsets
-  -- Months
+  -- | Months
   Integer
-  -- Weeks
+  -- | Weeks
   Integer
-  -- Days
+  -- | Days
   Integer
-  -- Hours
+  -- | Hours
   Integer
-  -- Minutes
+  -- | Minutes
   Integer
 data Offset = MonthOffset Integer | WeekOffset Integer | DayOffset Integer | HourOffset Integer | MinuteOffset Integer
 
