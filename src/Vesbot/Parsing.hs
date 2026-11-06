@@ -172,7 +172,7 @@ pDateTime = let
   pDate :: Parser String Day
   pDate = let
     pMonth = P.label "month" $ checkRange 1 12 "month" P.decimal 
-    pDay = P.label "day" $ checkRange 1 31 "day" P.decimal 
+    pDay = P.label "day" P.decimal 
     pYear = P.label "year" P.decimal
    in P.label "date" $ do
     month <- pMonth
@@ -180,7 +180,9 @@ pDateTime = let
     day <- pDay
     _ <- P.string "-"
     year <- pYear
-    return $ fromGregorian year month day
+    case fromGregorianValid year month day of
+      Just day' -> return day'
+      Nothing   -> fail $ "invalid day (" <> show day <> ")"
   pTime :: Parser String TimeOfDay
   pTime = let
     pHour = P.label "hour" $ checkRange 0 23 "hour" P.decimal 
