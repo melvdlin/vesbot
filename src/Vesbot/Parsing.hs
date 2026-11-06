@@ -113,7 +113,6 @@ parseOffset now name s = do
   offsets <- mapLeft displayParseError $ P.parse
     (P.space *> pOffsets <* P.space <* P.eof)
     name s
-  -- TODO: configurable time zone
   let tz = utc
   let (LocalTime day time) = utcToLocalTime tz now
   let (Offsets m w d h mins) = foldr mergeOffsets (Offsets 0 0 0 0 0) offsets
