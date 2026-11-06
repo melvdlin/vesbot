@@ -48,6 +48,7 @@ library
     Vesbot.ArgumentTimer,
     Vesbot.ArgumentTimer.Database,
     Vesbot.ArgumentTimer.Commands
+    Vesbot.Parsing.Utils,
     Vesbot.Predictions,
     Vesbot.Predictions.Database,
     Vesbot.Predictions.Types,
