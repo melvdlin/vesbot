@@ -84,9 +84,8 @@ parseDueDate now cmdName opts = do
     if isNothing rawDue && isNothing rawOffset
       then Left "at least one of `on` or `in` must be specified"
       else do
-        let parseArg p = mapLeft T.pack . p . T.unpack
-        due  <- maybe (Right now) (parseArg $ parseDateTime now "on") rawDue
-        due' <- maybe (Right due) (parseArg $ parseOffset now "in") rawOffset
+        due  <- maybe (Right now) (parseDateTime now "on") rawDue
+        due' <- maybe (Right due) (parseOffset now "in") rawOffset
         return due'
 
 dateTimeFormat :: String
@@ -94,7 +93,7 @@ dateTimeFormat = "MM-DD-YYYY hh:mm:ss <timezone>"
 offsetFormat :: String
 offsetFormat = "n[m|w|d|h|min]"
 
-parseDateTime :: UTCTime -> String -> String -> Either String UTCTime
+parseDateTime :: UTCTime -> String -> T.Text -> Either T.Text UTCTime
 parseDateTime now name s = do
   (day, time, tz) <- mapLeft displayParseError $ P.parse
     (P.space *> pDateTime <* P.space <* P.eof)
@@ -106,10 +105,10 @@ displayParseError ::
   ( P.VisualStream s
   , P.TraversableStream s
   , P.ShowErrorComponent e
-  ) => P.ParseErrorBundle s e -> String
-displayParseError e = "```\n" <> P.errorBundlePretty e <> "\n```"
+  ) => P.ParseErrorBundle s e -> T.Text
+displayParseError e = T.pack $ "```\n" <> P.errorBundlePretty e <> "\n```"
 
-parseOffset :: UTCTime -> String -> String -> Either String UTCTime
+parseOffset :: UTCTime -> String -> T.Text -> Either T.Text UTCTime
 parseOffset now name s = do
   offsets <- mapLeft displayParseError $ P.parse
     (P.space *> pOffsets <* P.space <* P.eof)
@@ -151,12 +150,12 @@ checkRange lo hi name p = do
   when (x < lo || x > hi) (fail $ unwords [name, "must be between", show lo, "and", show hi])
   return x
 
-pOffsets :: Parser String [Offset]
+pOffsets :: Parser T.Text [Offset]
 pOffsets = P.sepBy1 pOffset P.space
 
-pOffset :: Parser String Offset
+pOffset :: Parser T.Text Offset
 pOffset = let
-  pUnit :: Parser String (Integer -> Offset)
+  pUnit :: Parser T.Text (Integer -> Offset)
   pUnit = (P.string "m"   $> MonthOffset ) <|>
           (P.string "w"   $> WeekOffset  ) <|>
           (P.string "d"   $> DayOffset   ) <|>
@@ -167,9 +166,9 @@ pOffset = let
     unit <- pUnit
     return $ unit n
 
-pDateTime :: Parser String (Maybe Day, TimeOfDay, TimeZone)
+pDateTime :: Parser T.Text (Maybe Day, TimeOfDay, TimeZone)
 pDateTime = let
-  pDate :: Parser String Day
+  pDate :: Parser T.Text Day
   pDate = let
     pMonth = P.label "month" $ checkRange 1 12 "month" P.decimal 
     pDay = P.label "day" P.decimal 
@@ -183,7 +182,7 @@ pDateTime = let
     case fromGregorianValid year month day of
       Just day' -> return day'
       Nothing   -> fail $ "invalid day (" <> show day <> ")"
-  pTime :: Parser String TimeOfDay
+  pTime :: Parser T.Text TimeOfDay
   pTime = let
     pHour = P.label "hour" $ checkRange 0 23 "hour" P.decimal 
     pMinute = P.label "minute" $ checkRange 0 59 "minute" P.decimal
@@ -194,12 +193,12 @@ pDateTime = let
     minute <- pMinute
     second <- P.string ":" *> pSecond <|> return 0
     return $ TimeOfDay hour minute second
-  pTimeZone :: Parser String TimeZone
+  pTimeZone :: Parser T.Text TimeZone
   pTimeZone = P.label "time zone" $ do
     s <- P.takeRest
     if s == ""
       then return utc
-      else parseTimeM False defaultTimeLocale "%Z" s 
+      else parseTimeM False defaultTimeLocale "%Z" $ T.unpack s 
 
   pDateAndTime = do
     date <- pDate
