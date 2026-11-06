@@ -124,7 +124,7 @@ setReminder env = SlashCommand
         _ -> return ()
   }
     where
-      reminderField = OptionValueString "content" Nothing "What you want to be reminded of" Nothing True (Left False) (Just 1) Nothing
+      contentField = OptionValueString "content" Nothing "What you want to be reminded of" Nothing True (Left False) (Just 1) Nothing
       onField = OptionValueString "on" Nothing (T.pack dateTimeFormat) Nothing False (Left False) (Just 1) Nothing
       inField = OptionValueString "in" Nothing (T.pack offsetFormat) Nothing False (Left False) (Just 1) Nothing
       reg =
@@ -133,7 +133,11 @@ setReminder env = SlashCommand
           Nothing
           "Create a reminder"
           Nothing
-          (Just $ OptionsValues [reminderField, onField, inField ])
+          (Just $ OptionsSubcommands [
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "date" Nothing "on date" Nothing [contentField, onField],
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after" Nothing "offset from now" Nothing [contentField, inField],
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after-date" Nothing "offset from date" Nothing [contentField, onField, inField]
+          ])
           Nothing
           (Just False)
 

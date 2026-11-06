@@ -144,7 +144,7 @@ makePrediction env = SlashCommand
         _ -> return ()
   }
     where
-      predictionField = OptionValueString "prediction" Nothing "What you are predicting will happen" Nothing True (Left False) (Just 1) Nothing
+      contentField = OptionValueString "prediction" Nothing "What you are predicting will happen" Nothing True (Left False) (Just 1) Nothing
       onField = OptionValueString "on" Nothing (T.pack dateTimeFormat) Nothing False (Left False) (Just 1) Nothing
       inField = OptionValueString "in" Nothing (T.pack offsetFormat) Nothing False (Left False) (Just 1) Nothing
       confidenceField =  OptionValueNumber "confidence" Nothing "(Optional) Prediction confidence (ex: 20.4 means 20.4%)" Nothing False (Left False) (Just 0) (Just 100)
@@ -154,6 +154,10 @@ makePrediction env = SlashCommand
           Nothing
           "Predict the future!"
           Nothing
-          (Just $ OptionsValues [predictionField, onField, inField, confidenceField ])
+           (Just $ OptionsSubcommands [
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "date" Nothing "on date" Nothing [contentField, onField, confidenceField],
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after" Nothing "offset from now" Nothing [contentField, inField, confidenceField],
+            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after-date" Nothing "offset from date" Nothing [contentField, onField, inField, confidenceField]
+          ])
           Nothing
           (Just False)
