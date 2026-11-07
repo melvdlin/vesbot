@@ -6,7 +6,14 @@ module Vesbot.Reminders.Commands where
 import Vesbot.Utils (showT, maybeToEither, ephemeralResponseBasic, void, liftIO)
 import Vesbot.Config (Env(..))
 import Vesbot.Logging as Logging (log, LogType(..))
-import Vesbot.Parsing (extractStringOption, extractField, extractOptionsData, utcToInt, getUserData, parseDueDate, dateTimeFormat, offsetFormat)
+import Vesbot.Parsing
+  ( extractStringOption
+  , extractField
+  , extractOptionsData
+  , utcToInt
+  , getUserData
+  )
+import Vesbot.Parsing.Time (parseDateTime, parseTimeOffset, dateTimeFormat, offsetFormat)
 import Vesbot.Actions (Action(..))
 import Vesbot.Reminders.Types
 import Vesbot.Reminders.Database
@@ -19,8 +26,23 @@ import Discord.Types
 import Discord.Internal.Types.Interactions
 import Discord.Internal.Types.ApplicationCommands
 import qualified Discord.Requests as R
+
+import Data.Either.Extra (eitherToMaybe)
+import Data.Maybe (isNothing)
 import Data.Time
 import qualified Data.Text as T
+
+
+parseDueDate :: UTCTime -> T.Text -> OptionsData -> Either T.Text UTCTime
+parseDueDate now cmdName opts = do
+  let rawDue = eitherToMaybe $ extractField extractStringOption "on" cmdName opts
+  let rawOffset = eitherToMaybe $ extractField extractStringOption "in" cmdName opts
+  if isNothing rawDue && isNothing rawOffset
+    then Left "at least one of `on` or `in` must be specified"
+    else do
+      due  <- maybe (Right now) (parseDateTime now "Date parser") rawDue
+      due' <- maybe (Right due) (parseTimeOffset now "Relative time parser") rawOffset
+      return due'
 
 parseReminderCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (ReminderData, ChannelId)
 parseReminderCommand
@@ -131,13 +153,14 @@ setReminder env = SlashCommand
         CreateApplicationCommandChatInput
           "remind"
           Nothing
-          "Create a reminder"
+          "Create a reminder!"
           Nothing
-          (Just $ OptionsSubcommands [
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "date" Nothing "on date" Nothing [contentField, onField],
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after" Nothing "offset from now" Nothing [contentField, inField],
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after-date" Nothing "offset from date" Nothing [contentField, onField, inField]
-          ])
+          (Just $ OptionsValues
+            [ contentField
+            , inField
+            , onField
+            ]
+          )
           Nothing
           (Just False)
 

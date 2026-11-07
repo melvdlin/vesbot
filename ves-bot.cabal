@@ -45,6 +45,7 @@ library
     Vesbot.BotCommands.Types,
     Vesbot.Database.Types,
     Vesbot.Parsing,
+    Vesbot.Parsing.Time,
     Vesbot.ArgumentTimer,
     Vesbot.ArgumentTimer.Database,
     Vesbot.ArgumentTimer.Commands

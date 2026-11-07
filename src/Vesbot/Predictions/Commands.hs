@@ -14,7 +14,9 @@ import Vesbot.Parsing
   , extractField
   , utcToInt
   , getUserData
-  , extractOptionsData, parseDueDate, dateTimeFormat, offsetFormat)
+  , extractOptionsData
+  )
+import Vesbot.Parsing.Time (parseDateTime, parseTimeOffset, dateTimeFormat, offsetFormat)
 import Vesbot.Actions (Action(..))
 import Vesbot.Predictions.Types
 import Vesbot.Predictions.Database
@@ -27,9 +29,23 @@ import Discord.Types
 import Discord.Internal.Types.Interactions
 import Discord.Internal.Types.ApplicationCommands
 import qualified Discord.Requests as R
+
 import Data.Time
+import Data.Either.Extra (eitherToMaybe)
+import Data.Maybe (isNothing)
 import qualified Data.Text as T
 
+
+parseDueDate :: UTCTime -> T.Text -> OptionsData -> Either T.Text UTCTime
+parseDueDate now cmdName opts = do
+  let rawDue = eitherToMaybe $ extractField extractStringOption "on" cmdName opts
+  let rawOffset = eitherToMaybe $ extractField extractStringOption "in" cmdName opts
+  if isNothing rawDue && isNothing rawOffset
+    then Left "at least one of `on` or `in` must be specified"
+    else do
+      due  <- maybe (Right now) (parseDateTime now "date parser") rawDue
+      due' <- maybe (Right due) (parseTimeOffset now "relative time parser") rawOffset
+      return due'
 
 parsePredictionCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (PredictionData, ChannelId)
 parsePredictionCommand
@@ -154,10 +170,12 @@ makePrediction env = SlashCommand
           Nothing
           "Predict the future!"
           Nothing
-           (Just $ OptionsSubcommands [
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "date" Nothing "on date" Nothing [contentField, onField, confidenceField],
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after" Nothing "offset from now" Nothing [contentField, inField, confidenceField],
-            OptionSubcommandOrGroupSubcommand $ OptionSubcommand "after-date" Nothing "offset from date" Nothing [contentField, onField, inField, confidenceField]
-          ])
+          (Just $ OptionsValues
+            [ contentField
+            , inField
+            , onField
+            , confidenceField
+            ]
+          )
           Nothing
           (Just False)
