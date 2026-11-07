@@ -6,7 +6,14 @@ module Vesbot.Reminders.Commands where
 import Vesbot.Utils (showT, maybeToEither, ephemeralResponseBasic, void, liftIO)
 import Vesbot.Config (Env(..))
 import Vesbot.Logging as Logging (log, LogType(..))
-import Vesbot.Parsing (extractStringOption, extractField, extractOptionsData, parseDateInput, utcToInt, getUserData)
+import Vesbot.Parsing
+  ( extractStringOption
+  , extractField
+  , extractOptionsData
+  , utcToInt
+  , getUserData
+  )
+import Vesbot.Parsing.Time (parseDateTime, parseTimeOffset, dateTimeFormat, offsetFormat)
 import Vesbot.Actions (Action(..))
 import Vesbot.Reminders.Types
 import Vesbot.Reminders.Database
@@ -19,12 +26,27 @@ import Discord.Types
 import Discord.Internal.Types.Interactions
 import Discord.Internal.Types.ApplicationCommands
 import qualified Discord.Requests as R
+
+import Data.Either.Extra (eitherToMaybe)
+import Data.Maybe (isNothing)
 import Data.Time
 import qualified Data.Text as T
 
+
+parseDueDate :: UTCTime -> T.Text -> OptionsData -> Either T.Text UTCTime
+parseDueDate now cmdName opts = do
+  let rawDue = eitherToMaybe $ extractField extractStringOption "on" cmdName opts
+  let rawOffset = eitherToMaybe $ extractField extractStringOption "in" cmdName opts
+  if isNothing rawDue && isNothing rawOffset
+    then Left "at least one of `on` or `in` must be specified"
+    else do
+      due  <- maybe (Right now) (parseDateTime now "Date parser") rawDue
+      due' <- maybe (Right due) (parseTimeOffset now "Relative time parser") rawOffset
+      return due'
+
 parseReminderCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (ReminderData, ChannelId)
 parseReminderCommand
-  currTime
+  now
   InteractionApplicationCommand
     { applicationCommandData = cmdData
     , interactionUser
@@ -36,7 +58,6 @@ parseReminderCommand
     let cmdName = applicationCommandDataName cmdData
     optValues <- extractOptionsData cmdName opts
     reminderText <- extractField extractStringOption "content" cmdName optValues
-    dueDateText <- extractField extractStringOption "date" cmdName optValues
     _ <-
       maybeToEither
         "Error accessing Guild ID for the remind command. Note that this command can only be used in a server."
@@ -49,23 +70,13 @@ parseReminderCommand
       maybeToEither
         "Could not get user data for the remind command. Note that this command can only be used in a server."
         (getUserData interactionUser)
-    dueDateUTC <-
-      maybeToEither
-        (T.intercalate "\n"
-          [ "Error parsing reminder date. Here are the formatting options."
-          , "**Relative time:** \"in #w\" or \"in #d\" or \"in #h\" or \"in #m\", where # is a positive integer.\
-          \ \"w\" stands for weeks, \"d\" stands for days, \"h\" stands for hours, and \"m\" stands for minutes."
-          , "**Absolute time:** \"on month-day-year HH:MM <timezone>\", where the timezone is optional.\
-          \If no timezone is entered, the bot will default to UTC. Timezone examples are CST, CDT, EST, etc."
-          ]
-        )
-        (parseDateInput currTime . T.unpack $ dueDateText)
+    due <- parseDueDate now cmdName optValues
     return
       ( ReminderData
           { reminderUserId = uid
           , reminderContent = reminderText
-          , reminderMadeDate = currTime
-          , reminderDueDate = dueDateUTC
+          , reminderMadeDate = now
+          , reminderDueDate = due
           }
       , cid
       )
@@ -135,15 +146,21 @@ setReminder env = SlashCommand
         _ -> return ()
   }
     where
-      reminderField = OptionValueString "content" Nothing "What you want to be reminded of" Nothing True (Left False) (Just 1) Nothing
-      dateField = OptionValueString "date" Nothing "\"in #[w|d|h|m]\" or \"on MM-DD-YYYY HH:MM <timezone>\"" Nothing True (Left False) (Just 1) Nothing
+      contentField = OptionValueString "content" Nothing "What you want to be reminded of" Nothing True (Left False) (Just 1) Nothing
+      onField = OptionValueString "on" Nothing (T.pack dateTimeFormat) Nothing False (Left False) (Just 1) Nothing
+      inField = OptionValueString "in" Nothing (T.pack offsetFormat) Nothing False (Left False) (Just 1) Nothing
       reg =
         CreateApplicationCommandChatInput
           "remind"
           Nothing
-          "Create a reminder"
+          "Create a reminder!"
           Nothing
-          (Just $ OptionsValues [reminderField, dateField ])
+          (Just $ OptionsValues
+            [ contentField
+            , inField
+            , onField
+            ]
+          )
           Nothing
           (Just False)
 
