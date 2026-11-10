@@ -8,6 +8,7 @@ module Vesbot.Currency.Commands
   , showC
   ) where
 
+import qualified Vesbot.Parsing.Utils as Parsing
 import Vesbot.Utils (showT, maybeToEither, ephemeralResponseBasic, liftIO, void)
 import Vesbot.Parsing (getUserData, extractUserOption, extractNumberOption, extractField, extractOptionsData)
 import Vesbot.Config (Config(..), CurrencyConfig(..))
@@ -41,7 +42,6 @@ showC (CurrencyConfig _ sk sn sm) d =
         $ [(sk, k), (sn, n), (sm, m)]
   in
     T.intercalate " " $ if null noZeros then [sm <> "0"] else noZeros
-
 
 parseUserFieldCommand :: T.Text -> Interaction -> Maybe OptionsData -> Either T.Text UserId
 parseUserFieldCommand cmdName (InteractionApplicationCommand {}) opts = do
@@ -175,7 +175,9 @@ viewCurrencyCommand dbconn cfg = SlashCommand
   , commandRegistration = Just reg
   , slashCommandHandler = \intr opts -> do
       let uid = parseUserFieldCommand "viewcurrency" intr opts
-      botReply <- liftIO $ createViewCurrencyResponse dbconn (cfgCurrencyInfo cfg) uid
+      let self = maybeToEither "viewcurrency: failed to get user" $ Parsing.getInteractionUser intr 
+      let user = either (const self) Right uid
+      botReply <- liftIO $ createViewCurrencyResponse dbconn (cfgCurrencyInfo cfg) user
       -- Respond with the error or the correct reply
       void . restCall $
         R.CreateInteractionResponse
@@ -185,7 +187,7 @@ viewCurrencyCommand dbconn cfg = SlashCommand
   }
     where
       cn = currencyName . cfgCurrencyInfo $ cfg
-      o1 = OptionValueUser "user" Nothing "User to check" Nothing True
+      o1 = OptionValueUser "user" Nothing "User to check. Defaults to self." Nothing False
       reg = -- Command registration
         CreateApplicationCommandChatInput
           "viewcurrency"
@@ -219,7 +221,9 @@ viewEmojisCommand dbconn = SlashCommand
   , commandRegistration = Just reg
   , slashCommandHandler = \intr opts -> do
       let uid = parseUserFieldCommand "viewemojis" intr opts
-      botReply <- liftIO $ createViewEmojisResponse dbconn uid
+      let self = maybeToEither "viewemojis: failed to get user" $ Parsing.getInteractionUser intr 
+      let user = either (const self) Right uid
+      botReply <- liftIO $ createViewEmojisResponse dbconn user
       void . restCall $
         R.CreateInteractionResponse
           (interactionId intr)
@@ -227,7 +231,7 @@ viewEmojisCommand dbconn = SlashCommand
           botReply 
   }
     where
-      o1 = OptionValueUser "user" Nothing "User to check" Nothing True
+      o1 = OptionValueUser "user" Nothing "User to check. Defaults to self." Nothing False
       reg = -- Command registration
         CreateApplicationCommandChatInput
           "viewemojis"

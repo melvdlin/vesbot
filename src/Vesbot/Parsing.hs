@@ -13,7 +13,6 @@ import qualified Data.Text as T
 import Data.Time
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
 import Data.Int (Int64)
-import Data.Char (isDigit)
 import Data.Scientific (toRealFloat)
 import Vesbot.Utils (maybeToEither)
 
@@ -23,10 +22,6 @@ intToUTC = posixSecondsToUTCTime . realToFrac
 
 utcToInt :: UTCTime -> Int64
 utcToInt = floor . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds
-
-defHead :: a -> [a] -> a
-defHead d [] = d
-defHead _ (x:_) = x
 
 
 parseJSON :: AE.FromJSON a => FilePath -> IO a
@@ -40,27 +35,6 @@ parseJSON path = do
     Right d  -> do
       Logging.log Info $ "Successfully parsed the JSON data in " <> T.pack path <> "."
       return d
-
-
--- | Kind of a silly function, date input parsing for the predictions is fairly restrictive right now.
-parseDateInput :: UTCTime -> String -> Maybe UTCTime
-parseDateInput currTime inpt = case words inpt of
-  ("on":absInpt:timeInpt:timeZoneOrEmpty) ->
-    let
-      timeZone = parseTimeM False defaultTimeLocale "%Z" (defHead "UTC" timeZoneOrEmpty)
-    in do
-      date <- parseTimeM False defaultTimeLocale "%m-%d-%Y" absInpt :: Maybe Day
-      time <- parseTimeM False defaultTimeLocale "%R" timeInpt :: Maybe TimeOfDay
-      tz <- timeZone
-      return (localTimeToUTC tz (LocalTime date time))
-
-  ("in":relInpt:_) -> do
-    let letter = dropWhile isDigit relInpt
-    timeIncrement <- parseTimeM False defaultTimeLocale (concat ["%", letter, letter]) relInpt :: Maybe NominalDiffTime
-    return (addUTCTime timeIncrement currTime)
-
-  _          -> Nothing
-
 
 -- | Extracting otions from command fields
 extractStringOption :: T.Text -> OptionsData -> Maybe T.Text
