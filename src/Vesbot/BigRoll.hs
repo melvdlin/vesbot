@@ -155,7 +155,7 @@ rollRepeat (Repeat repeatExpr exprToRepeat) rng = let
          in (rolledExpr:rolledExprs, postElementRng)
  in (RolledRepeat rolled, rng')
 rollDie (Die n) rng = let
-    range      = if n < 0 then (n, 0) else (0, n)
+    range      = if n < 0 then (n, -1) else (1, n)
     (n', rng') = uniformR range rng
  in (RolledDie n', rng')
 rollConst (Const n) = (RolledConst n,)
