@@ -161,14 +161,15 @@ roll = SlashCommand
     sendRollReply :: Roll.Expr Integer -> Interaction -> DiscordHandler ()
     sendRollReply e intr = do
       rolled <- liftIO $ getStdRandom $ Roll.roll e
+      let preciseExpr = Roll.preciseExpr e
       let prettyExpr = Roll.prettyExpr e
       let pretty = Roll.pretty rolled
       let result = Roll.eval rolled
       let response = T.pack $ case rolled of
             (Expr.RolledConstExpr _) -> show result
             (Expr.RolledDieExpr   _) -> show result
-            _ -> unwords [pretty, "=", show result]
-      Logging.log Info $ T.pack $ unwords ["User rolled", prettyExpr, "=>", pretty, "=", show result]
+            _ -> unwords [prettyExpr, "⟹", pretty, "=", show result]
+      Logging.log Info $ T.pack $ unwords ["User rolled", preciseExpr, "=", prettyExpr, "=>", pretty, "=", show result]
 
       res <- restCall $
         R.CreateInteractionResponse
