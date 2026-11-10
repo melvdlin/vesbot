@@ -3,8 +3,42 @@
 {-# LANGUAGE Rank2Types #-}
 {- HLint ignore "Use newtype instead of data" -}
 
-module Vesbot.BigRoll (
-    Expr, RolledExpr, roll, eval, prettyExpr, pretty, parse
+module Vesbot.BigRoll
+( Expr(..)
+, GroupedExpr(..)
+, UnaryExpr (..)
+, BinExpr (..)
+, DivExpr (..)
+, RepeatExpr (..)
+, DieExpr (..)
+, ConstExpr (..)
+, RolledExpr(..)
+, RolledGroupedExpr(..)
+, RolledUnaryExpr (..)
+, RolledBinExpr (..)
+, RolledDivExpr (..)
+, RolledRepeatExpr (..)
+, RolledDieExpr (..)
+, RolledConstExpr (..)
+, roll
+, eval
+, prettyExpr
+, prettyGroupedExpr
+, prettyUnaryExpr
+, prettyBinExpr
+, prettyDivExpr
+, prettyRepeatExpr
+, prettyDieExpr
+, prettyConstExpr
+, pretty
+, prettyGrouped
+, prettyUnary
+, prettyBin
+, prettyDiv
+, prettyRepeat
+, prettyDie
+, prettyConst
+, parse
 ) where
 
 import System.Random (SplitGen, uniformR, UniformRange)
@@ -28,20 +62,22 @@ type Parser = P.Parsec Void BS.ByteString
 
 
 data Expr a
-    = UnaryExpr  (UnaryExpr  a)
-    | BinExpr    (BinExpr    a)
-    | DivExpr    (DivExpr    a)
-    | RepeatExpr (RepeatExpr a)
-    | DieExpr    (DieExpr    a)
-    | ConstExpr  (ConstExpr  a)
+    = GroupedExpr (GroupedExpr a)
+    | UnaryExpr   (UnaryExpr   a)
+    | BinExpr     (BinExpr     a)
+    | DivExpr     (DivExpr     a)
+    | RepeatExpr  (RepeatExpr  a)
+    | DieExpr     (DieExpr     a)
+    | ConstExpr   (ConstExpr   a)
  deriving (Show, Eq)
 
-data UnaryExpr  a = Unary  UnaryOp (Expr a)               deriving (Show, Eq)
-data BinExpr    a = Bin    BinOp   (Expr a) (     Expr a) deriving (Show, Eq)
-data DivExpr    a = Div            (Expr a) (ConstExpr a) deriving (Show, Eq)
-data RepeatExpr a = Repeat         (Expr a) (     Expr a) deriving (Show, Eq)
-data DieExpr    a = Die                  a                deriving (Show, Eq)
-data ConstExpr  a = Const                a                deriving (Show, Eq)
+data GroupedExpr a = Grouped        (Expr a)               deriving (Show, Eq)
+data UnaryExpr   a = Unary  UnaryOp (Expr a)               deriving (Show, Eq)
+data BinExpr     a = Bin    BinOp   (Expr a) (     Expr a) deriving (Show, Eq)
+data DivExpr     a = Div            (Expr a) (ConstExpr a) deriving (Show, Eq)
+data RepeatExpr  a = Repeat         (Expr a) (     Expr a) deriving (Show, Eq)
+data DieExpr     a = Die                  a                deriving (Show, Eq)
+data ConstExpr   a = Const                a                deriving (Show, Eq)
 
 data UnaryOp = Neg           deriving (Show, Eq)
 data BinOp = Add | Sub | Mul deriving (Show, Eq)
@@ -54,29 +90,36 @@ divOpPrecedence :: Int
 divOpPrecedence = 8
 
 data RolledExpr a
-    = RolledUnaryExpr  (RolledUnaryExpr a)
-    | RolledBinExpr    (RolledBinExpr a)
-    | RolledDivExpr    (RolledDivExpr a)
-    | RolledRepeatExpr (RolledRepeatExpr a)
-    | RolledDieExpr    (RolledDieExpr a)
-    | RolledConstExpr  (RolledConstExpr a)
+    = RolledGroupedExpr (RolledGroupedExpr a)
+    | RolledUnaryExpr   (RolledUnaryExpr a)
+    | RolledBinExpr     (RolledBinExpr a)
+    | RolledDivExpr     (RolledDivExpr a)
+    | RolledRepeatExpr  (RolledRepeatExpr a)
+    | RolledDieExpr     (RolledDieExpr a)
+    | RolledConstExpr   (RolledConstExpr a)
  deriving (Show, Eq)
 
-data RolledUnaryExpr  a = RolledUnary  UnaryOp (RolledExpr a)                     deriving (Show, Eq)
-data RolledBinExpr    a = RolledBin    BinOp   (RolledExpr a) (RolledExpr      a) deriving (Show, Eq)
-data RolledDivExpr    a = RolledDiv            (RolledExpr a) (RolledConstExpr a) deriving (Show, Eq)
-data RolledRepeatExpr a = RolledRepeat         [RolledExpr a]                     deriving (Show, Eq)
-data RolledDieExpr    a = RolledDie                        a                      deriving (Show, Eq)
-data RolledConstExpr  a = RolledConst                      a                      deriving (Show, Eq)
+data RolledGroupedExpr a = RolledGrouped         (RolledExpr a)                     deriving (Show, Eq)
+data RolledUnaryExpr   a = RolledUnary   UnaryOp (RolledExpr a)                     deriving (Show, Eq)
+data RolledBinExpr     a = RolledBin     BinOp   (RolledExpr a) (RolledExpr      a) deriving (Show, Eq)
+data RolledDivExpr     a = RolledDiv             (RolledExpr a) (RolledConstExpr a) deriving (Show, Eq)
+data RolledRepeatExpr  a = RolledRepeat          [RolledExpr a]                     deriving (Show, Eq)
+data RolledDieExpr     a = RolledDie                         a                      deriving (Show, Eq)
+data RolledConstExpr   a = RolledConst                       a                      deriving (Show, Eq)
 
 roll :: (Num a, Integral a, UniformRange a) => SplitGen g => Expr a -> g -> (RolledExpr a, g)
-roll (UnaryExpr  e) = first RolledUnaryExpr  . rollUnary  e
-roll (BinExpr    e) = first RolledBinExpr    . rollBin    e
-roll (DivExpr    e) = first RolledDivExpr    . rollDiv    e
-roll (RepeatExpr e) = first RolledRepeatExpr . rollRepeat e
-roll (DieExpr    e) = first RolledDieExpr    . rollDie    e
-roll (ConstExpr  e) = first RolledConstExpr  . rollConst  e
+roll (GroupedExpr e) = first RolledGroupedExpr . rollGrouped e
+roll (UnaryExpr   e) = first RolledUnaryExpr   . rollUnary   e
+roll (BinExpr     e) = first RolledBinExpr     . rollBin     e
+roll (DivExpr     e) = first RolledDivExpr     . rollDiv     e
+roll (RepeatExpr  e) = first RolledRepeatExpr  . rollRepeat  e
+roll (DieExpr     e) = first RolledDieExpr     . rollDie     e
+roll (ConstExpr   e) = first RolledConstExpr   . rollConst   e
 
+rollGrouped :: (Num a, Integral a, UniformRange a) => SplitGen g => GroupedExpr a -> g -> (RolledGroupedExpr a, g)
+rollGrouped (Grouped e) rng = let
+    (e', rng') = roll e rng
+ in (RolledGrouped e', rng')
 rollUnary :: (Num a, Integral a, UniformRange a) => SplitGen g => UnaryExpr a -> g -> (RolledUnaryExpr a, g)
 rollUnary (Unary op e) rng = let
     (e', rng') = roll e rng
@@ -109,13 +152,16 @@ rollConst :: SplitGen g => ConstExpr a -> g -> (RolledConstExpr a, g)
 rollConst (Const n) = (RolledConst n,)
 
 eval :: (Num a, Integral a) =>  RolledExpr a -> a
-eval (RolledUnaryExpr  e) = evalUnary  e
-eval (RolledBinExpr    e) = evalBin    e
-eval (RolledDivExpr    e) = evalDiv    e
-eval (RolledRepeatExpr e) = evalRepeat e
-eval (RolledDieExpr    e) = evalDie    e
-eval (RolledConstExpr  e) = evalConst  e
+eval (RolledGroupedExpr e) = evalGrouped e
+eval (RolledUnaryExpr   e) = evalUnary   e
+eval (RolledBinExpr     e) = evalBin     e
+eval (RolledDivExpr     e) = evalDiv     e
+eval (RolledRepeatExpr  e) = evalRepeat  e
+eval (RolledDieExpr     e) = evalDie     e
+eval (RolledConstExpr   e) = evalConst   e
 
+evalGrouped :: (Num a, Integral a) => RolledGroupedExpr a -> a
+evalGrouped (RolledGrouped e) = eval e
 evalUnary :: (Num a, Integral a) => RolledUnaryExpr a -> a
 evalUnary (RolledUnary Neg e) = -(eval e)
 evalBin :: (Num a, Integral a) => RolledBinExpr a -> a
@@ -132,15 +178,18 @@ evalConst :: RolledConstExpr a -> a
 evalConst (RolledConst n) = n
 
 pretty :: (Show a) => RolledExpr a -> String
-pretty (RolledUnaryExpr  e) = prettyUnary  e
-pretty (RolledBinExpr    e) = prettyBin    e
-pretty (RolledDivExpr    e) = prettyDiv    e
-pretty (RolledRepeatExpr e) = prettyRepeat e
-pretty (RolledDieExpr    e) = prettyDie    e
-pretty (RolledConstExpr  e) = prettyConst  e
+pretty (RolledGroupedExpr e) = prettyGrouped e
+pretty (RolledUnaryExpr   e) = prettyUnary   e
+pretty (RolledBinExpr     e) = prettyBin     e
+pretty (RolledDivExpr     e) = prettyDiv     e
+pretty (RolledRepeatExpr  e) = prettyRepeat  e
+pretty (RolledDieExpr     e) = prettyDie     e
+pretty (RolledConstExpr   e) = prettyConst   e
 
+prettyGrouped :: (Show a) => RolledGroupedExpr a -> String
+prettyGrouped (RolledGrouped e) = "(" <> pretty e <> ")"
 prettyUnary :: (Show a) => RolledUnaryExpr a -> String
-prettyUnary (RolledUnary Neg e) = "-" <> pretty e
+prettyUnary (RolledUnary op e) = prettyUnaryOp op <> pretty e
 prettyUnaryOp :: UnaryOp -> String
 prettyUnaryOp Neg = "-"
 prettyBin :: (Show a) => RolledBinExpr a -> String
@@ -160,14 +209,17 @@ prettyConst (RolledConst n) = show n
 
 prettyExpr :: (Show a) => Expr a -> String
 prettyExpr e = let
-    prettyExpr' (UnaryExpr  e') = prettyUnaryExpr  e'
-    prettyExpr' (BinExpr    e') = prettyBinExpr    e'
-    prettyExpr' (DivExpr    e') = prettyDivExpr    e'
-    prettyExpr' (RepeatExpr e') = prettyRepeatExpr e'
-    prettyExpr' (DieExpr    e') = prettyDieExpr    e'
-    prettyExpr' (ConstExpr  e') = prettyConstExpr  e'
+    prettyExpr' (GroupedExpr e') = prettyGroupedExpr e'
+    prettyExpr' (UnaryExpr   e') = prettyUnaryExpr   e'
+    prettyExpr' (BinExpr     e') = prettyBinExpr     e'
+    prettyExpr' (DivExpr     e') = prettyDivExpr     e'
+    prettyExpr' (RepeatExpr  e') = prettyRepeatExpr  e'
+    prettyExpr' (DieExpr     e') = prettyDieExpr     e'
+    prettyExpr' (ConstExpr   e') = prettyConstExpr   e'
     in unwords ["(", prettyExpr' e, ")"]
 
+prettyGroupedExpr  :: (Show a) => GroupedExpr a -> String
+prettyGroupedExpr (Grouped e) = "(" <> prettyExpr e <> ")"
 prettyUnaryExpr  :: (Show a) => UnaryExpr a -> String
 prettyUnaryExpr (Unary op e) = prettyUnaryOp op <> prettyExpr e
 prettyBinExpr    :: (Show a) => BinExpr a -> String
@@ -216,7 +268,7 @@ pLeft = do
         e <- pExpr 0 <?> "expression"
         P.space
         _ <- P.string ")"
-        return e
+        return $ GroupedExpr $ Grouped e
      else
             (ConstExpr <$> pConst   <?> "constant"        ) <|>
             (DieExpr   <$> pDieExpr <?> "die expression"  ) <|>

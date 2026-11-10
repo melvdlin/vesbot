@@ -35,6 +35,7 @@ import qualified Data.Text.Encoding as TE
 import Data.Time (getCurrentTime)
 import System.Random.Stateful (uniformRM, globalStdGen, getStdRandom)
 import Control.Monad (when)
+import qualified Vesbot.BigRoll as Expr
 
 
 -- | Some are slash commands, some are message commands.
@@ -163,7 +164,10 @@ roll = SlashCommand
       let prettyExpr = Roll.prettyExpr e
       let pretty = Roll.pretty rolled
       let result = Roll.eval rolled
-      let response = T.pack $ unwords [pretty, "=", show result]
+      let response = T.pack $ case rolled of
+            (Expr.RolledConstExpr _) -> show result
+            (Expr.RolledDieExpr   _) -> show result
+            _ -> unwords [pretty, "=", show result]
       Logging.log Info $ T.pack $ unwords ["User rolled", prettyExpr, "=>", pretty, "=", show result]
 
       res <- restCall $
