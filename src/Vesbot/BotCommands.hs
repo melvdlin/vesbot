@@ -165,10 +165,11 @@ roll = SlashCommand
       let prettyExpr = Roll.prettyExpr e
       let pretty = Roll.pretty rolled
       let result = Roll.eval rolled
-      let response = T.pack $ case rolled of
+      let resultDisplay = case rolled of
             (Expr.RolledConstExpr _) -> show result
             (Expr.RolledDieExpr   _) -> show result
-            _ -> unwords [prettyExpr, "⟹", pretty, "=", show result]
+            _ -> unwords [pretty, "=", show result]
+      let response = T.pack $ unwords [prettyExpr, "⟹", resultDisplay]
       Logging.log Info $ T.pack $ unwords ["User rolled", preciseExpr, "=", prettyExpr, "=>", pretty, "=", show result]
 
       res <- restCall $
