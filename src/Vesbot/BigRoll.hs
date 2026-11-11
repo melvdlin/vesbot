@@ -276,28 +276,28 @@ preciseConstExpr   (Const      n  ) = show n
 
 {-
     S      -> expr EOF
-    expr   -> left right?
+    expr   -> left right*
     left   -> "(" expr ")" | const | die | unary
     unary  -> unaryOp left
     die    -> "d" decimal | "D" decimal
     const  -> "-"? decimal
     right  -> binary | div | repeat
-    div    -> "/" nzonst
     binary -> binaryOp expr
-    repeat -> left | left repeat
+    div    -> "/" nzonst
+    repeat -> left | left
 -}
 
-parse :: (Num a, Integral a) =>  Parser (Expr a)
+parse :: (Show a, Num a, Integral a) =>  Parser (Expr a)
 parse = P.space *> pExpr 0 <* P.eof
 
-pExpr :: (Num a, Integral a) =>  Int -> Parser (Expr a)
+pExpr :: (Show a, Num a, Integral a) =>  Int -> Parser (Expr a)
 pExpr prec = do
     l <- pLeft
     P.space
     let lr = pRight prec l <* P.space
     try lr <|> return l
 
-pLeft :: (Num a, Integral a) => Parser (Expr a)
+pLeft :: (Show a, Num a, Integral a) => Parser (Expr a)
 pLeft = do
     paren <- try $ P.withRecovery
         (const $ return False)
@@ -314,7 +314,7 @@ pLeft = do
             (DieExpr   <$> pDieExpr <?> "die expression"  ) <|>
             (UnaryExpr <$> pUnary   <?> "unary expression")
 
-pUnary :: (Num a, Integral a) =>  Parser (UnaryExpr a)
+pUnary :: (Show a, Num a, Integral a) =>  Parser (UnaryExpr a)
 pUnary = do
     op      <- try pUnaryOp <?> "unary operator"
     operand <- try pLeft    <?> "operand"
@@ -340,24 +340,21 @@ pConst = do
     return $ Const n
 
 
-pRight :: (Num a, Integral a) => Int -> Expr a -> Parser (Expr a)
-pRight prec l =
-    try (BinExpr    <$> pBin    prec l ) <|>
-    try (DivExpr    <$> pDiv    prec l ) <|>
-    try (RepeatExpr <$> pRepeat prec l )
+pRight :: (Show a, Num a, Integral a) => Int -> Expr a -> Parser (Expr a)
+pRight prec l = do
+    right <- try (BinExpr    <$> pBin    prec l ) <|>
+             try (DivExpr    <$> pDiv    prec l ) <|>
+             try (RepeatExpr <$> pRepeat prec l )
+    P.space
+    (try (pRight prec right) <?> "left-associative right") <|> return right
 
-pBin :: (Num a, Integral a) =>  Int -> Expr a -> Parser (BinExpr a)
+pBin :: (Show a, Num a, Integral a) =>  Int -> Expr a -> Parser (BinExpr a)
 pBin prec l = do
     op <- try $ pBinOpWithPrecedence prec
     P.space
     r <- try (pExpr (binOpPrecedence op + 1)) <?> "right operand"
     let e = Bin op l r
-    
-    let lAssoc = do
-        P.space
-        pBin prec (BinExpr e)
-
-    (try lAssoc <?> "left-associative binary expression") <|> return e
+    return e
         
 
 pDiv :: (Num a, Integral a) => Int -> Expr a -> Parser (DivExpr a)
@@ -391,12 +388,9 @@ checkPrecedence minPrec prec = do
     return prec
 
 {-# ANN pRepeat ( "HLint: ignore Use <$>" :: String ) #-}
-pRepeat :: (Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
-pRepeat prec l = do
+pRepeat :: (Show a, Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
+pRepeat _prec l = do
     r <- pLeft
     let e = Repeat l r
-    let lAssoc = do
-        P.space
-        pRepeat prec (RepeatExpr e)
-    (try lAssoc <?> "left-associative repeat") <|> return e
+    return e
 
