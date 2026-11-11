@@ -284,7 +284,7 @@ preciseConstExpr   (Const      n  ) = show n
     right  -> binary | div | repeat
     div    -> "/" nzonst
     binary -> binaryOp expr
-    repeat -> left
+    repeat -> left | left repeat
 -}
 
 parse :: (Num a, Integral a) =>  Parser (Expr a)
@@ -392,7 +392,11 @@ checkPrecedence minPrec prec = do
 
 {-# ANN pRepeat ( "HLint: ignore Use <$>" :: String ) #-}
 pRepeat :: (Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
-pRepeat _prec l = do
+pRepeat prec l = do
     r <- pLeft
-    return $ Repeat l r
+    let e = Repeat l r
+    let lAssoc = do
+        P.space
+        pRepeat prec (RepeatExpr e)
+    (try lAssoc <?> "left-associative repeat") <|> return e
 
