@@ -235,10 +235,10 @@ prettyExpr (RepeatExpr  e') = prettyRepeatExpr  e'
 prettyExpr (DieExpr     e') = prettyDieExpr     e'
 prettyExpr (ConstExpr   e') = prettyConstExpr   e'
 
-prettyGroupedExpr (Grouped    e  ) = "(" <> preciseExpr e <> ")"
-prettyUnaryExpr   (Unary   op e  ) = prettyUnaryOp op <> preciseExpr e
-prettyBinExpr     (Bin     op l r) = unwords [preciseExpr l, prettyBinOp op, preciseExpr r]
-prettyDivExpr     (Div        l r) = unwords [preciseExpr l, "/", preciseConstExpr r]
+prettyGroupedExpr (Grouped    e  ) = "(" <> prettyExpr e <> ")"
+prettyUnaryExpr   (Unary   op e  ) = prettyUnaryOp op <> prettyExpr e
+prettyBinExpr     (Bin     op l r) = unwords [prettyExpr l, prettyBinOp op, prettyExpr r]
+prettyDivExpr     (Div        l r) = unwords [prettyExpr l, "/", prettyConstExpr r]
 prettyDieExpr     (Die        n  ) = "d" <> show n
 prettyConstExpr   (Const      n  ) = show n
 prettyRepeatExpr  (Repeat     l r) = prettyExpr l <> sep <> prettyExpr r
@@ -284,7 +284,7 @@ preciseConstExpr   (Const      n  ) = show n
     right  -> binary | div | repeat
     div    -> "/" nzonst
     binary -> binaryOp expr
-    repeat    -> expr
+    repeat -> left
 -}
 
 parse :: (Num a, Integral a) =>  Parser (Expr a)
@@ -390,9 +390,9 @@ checkPrecedence minPrec prec = do
          (fail $ unwords ["precedence", show prec, "<", show minPrec])
     return prec
 
-
+{-# ANN pRepeat ( "HLint: ignore Use <$>" :: String ) #-}
 pRepeat :: (Num a, Integral a) =>  Int -> Expr a -> Parser (RepeatExpr a)
-pRepeat prec l = do
-    r <- pExpr prec
+pRepeat _prec l = do
+    r <- pLeft
     return $ Repeat l r
 

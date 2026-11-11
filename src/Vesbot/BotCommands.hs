@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 module Vesbot.BotCommands
   ( BotCommand(..)
   , slashCommands
@@ -113,12 +114,12 @@ roll = SlashCommand
             (interactionId intr)
             (interactionToken intr)
             (ephemeralResponseBasic err) 
-      Right e -> do
+      Right (raw, e) -> do
         mUsr <- liftIO $ tryToGetUser (interactionUser intr) -- this command is only going to work for guild members
         case mUsr of
           Nothing -> return ()
           Just _ -> do
-            sendRollReply e intr
+            sendRollReply raw e intr
   }
   where
     cmdName = "roll"
@@ -133,13 +134,14 @@ roll = SlashCommand
         Nothing
         (Just False)
 
-    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text (Roll.Expr Integer)
+    parseCommand :: Interaction -> Maybe OptionsData -> Either T.Text (T.Text, Roll.Expr Integer)
     parseCommand InteractionApplicationCommand {} opts = do
       optValues <- extractOptionsData cmdName opts
-      s <- TE.encodeUtf8 <$> extractField extractStringOption "roll" cmdName optValues
-      Either.mapLeft
+      s <- extractField extractStringOption "roll" cmdName optValues
+      let bs = TE.encodeUtf8 s
+      Either.mapRight (s,) $ Either.mapLeft
         (T.pack . ("```\n" <>) . ("\n```" <>) . MP.errorBundlePretty)
-        (MP.parse Roll.parse "roll" s)
+        (MP.parse Roll.parse "roll" bs)
       
     parseCommand _ _ = Left "Tried to parse a non slash command on an interaction that is not an application command."
 
@@ -158,8 +160,8 @@ roll = SlashCommand
             return Nothing
           Just u -> return (Just u)
 
-    sendRollReply :: Roll.Expr Integer -> Interaction -> DiscordHandler ()
-    sendRollReply e intr = do
+    sendRollReply :: T.Text -> Roll.Expr Integer -> Interaction -> DiscordHandler ()
+    sendRollReply raw e intr = do
       rolled <- liftIO $ getStdRandom $ Roll.roll e
       let preciseExpr = Roll.preciseExpr e
       let prettyExpr = Roll.prettyExpr e
@@ -170,7 +172,13 @@ roll = SlashCommand
             (Expr.RolledDieExpr   _) -> show result
             _ -> unwords [pretty, "=", show result]
       let response = T.pack $ unwords [prettyExpr, "⟹", resultDisplay]
-      Logging.log Info $ T.pack $ unwords ["User rolled", preciseExpr, "=", prettyExpr, "=>", pretty, "=", show result]
+      Logging.log Info $ T.pack $ unwords
+        [ "User rolled"
+        , T.unpack raw
+        , "=>", preciseExpr
+        , "=", prettyExpr
+        , "=>", pretty
+        , "=", show result]
 
       res <- restCall $
         R.CreateInteractionResponse
