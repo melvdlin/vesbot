@@ -242,8 +242,9 @@ prettyDivExpr     (Div        l r) = unwords [preciseExpr l, "/", preciseConstEx
 prettyDieExpr     (Die        n  ) = "d" <> show n
 prettyConstExpr   (Const      n  ) = show n
 prettyRepeatExpr  (Repeat     l r) = prettyExpr l <> sep <> prettyExpr r
-  where sep = case r of DieExpr _ -> ""
-                        _         -> " "
+  where sep = case r of DieExpr _                         -> ""
+                        RepeatExpr (Repeat (DieExpr _) _) -> ""
+                        _                                 -> " "
 
 preciseExpr         :: (Show a) => Expr        a -> String
 preciseGroupedExpr  :: (Show a) => GroupedExpr a -> String
