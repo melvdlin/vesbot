@@ -36,6 +36,7 @@ import Data.Maybe (isNothing)
 import qualified Data.Text as T
 
 
+{-# ANN parseDueDate ("HLint: ignore Redundant return" :: String) #-}
 parseDueDate :: UTCTime -> T.Text -> OptionsData -> Either T.Text UTCTime
 parseDueDate now cmdName opts = do
   let rawDue = eitherToMaybe $ extractField extractStringOption "on" cmdName opts
@@ -44,7 +45,7 @@ parseDueDate now cmdName opts = do
     then Left "at least one of `on` or `in` must be specified"
     else do
       due  <- maybe (Right now) (parseDateTime now "date parser") rawDue
-      due' <- maybe (Right due) (parseTimeOffset now "relative time parser") rawOffset
+      due' <- maybe (Right due) (parseTimeOffset due "relative time parser") rawOffset
       return due'
 
 parsePredictionCommand :: UTCTime -> Interaction -> Maybe OptionsData -> Either T.Text (PredictionData, ChannelId)
