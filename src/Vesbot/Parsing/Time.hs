@@ -36,7 +36,7 @@ displayParseError e = T.pack $ "```\n" <> P.errorBundlePretty e <> "\n```"
 dateTimeFormat :: String
 dateTimeFormat = "MM-DD-YYYY hh:mm:ss <timezone>"
 offsetFormat :: String
-offsetFormat = "n[mo|w|d|h|min]"
+offsetFormat = "n[y|mo|w|d|h|min]"
 
 -- | This function runs the parser pDateOrTime defined below and converts its result to a UTCTime. It requires the
 -- current time to be specified, in case pDateOrTime returns just a (TimeOfDay, TimeZone) pair.
@@ -51,26 +51,28 @@ parseDateTime now name inpt = do
         in  localTimeToUTC tz $ LocalTime today time
       Right utcTime -> utcTime
 
--- | This function runs the pOffsets parser defined below and extracts the Months, Weeks, Days, Hours, Minutes
--- that the user entered. It then adds this offset to the current time.
+-- | This function runs the pOffsets parser defined below and extracts
+--   the Years, Months, Weeks, Days, Hours, Minutes
+--   that the user entered. It then adds this offset to the current time.
 parseTimeOffset :: UTCTime -> String -> T.Text -> Either T.Text UTCTime
 parseTimeOffset (UTCTime nowDay nowSeconds) name inpt = do
   offsets <-
     mapLeft displayParseError $
       P.parse (P.space *> pOffsets <* P.space <* P.eof) name inpt
-  let (Offsets mo w d h mins) = foldr mergeOffsets (Offsets 0 0 0 0 0) offsets
+  let (Offsets y mo w d h mins) = foldr mergeOffsets (Offsets 0 0 0 0 0 0) offsets
       seconds = 60 * (60 * h + mins)
-      newDay = addGregorianDurationRollOver (CalendarDiffDays mo (w * 7 + d)) nowDay
+      newDay = addGregorianDurationRollOver (CalendarDiffDays mo (w * 7 + d))
+             . addGregorianYearsRollOver y $ nowDay
       newTime = addUTCTime (fromInteger seconds) (UTCTime newDay nowSeconds)
   return newTime
 
 -- | Type to hold all of the offsets the user can enter.
--- Order: Months, Weeks, Days, Hours, Seconds
-data Offsets = Offsets Integer Integer Integer Integer Integer
+-- Order: Years, Months, Weeks, Days, Hours, Seconds
+data Offsets = Offsets Integer Integer Integer Integer Integer Integer
 
 mergeOffsets :: Offsets -> Offsets -> Offsets
-mergeOffsets (Offsets mo w d h m) (Offsets mo' w' d' h' m')
-  = Offsets (mo + mo') (w + w') (d + d') (h + h') (m + m')
+mergeOffsets (Offsets y mo w d h m) (Offsets y' mo' w' d' h' m')
+  = Offsets (y + y') (mo + mo') (w + w') (d + d') (h + h') (m + m')
 
 checkRange :: (Ord a, Show a, P.Stream s) => a -> a -> String -> Parser s a -> Parser s a
 checkRange lo hi name p = do
@@ -88,11 +90,12 @@ pOffset = do
   return $ unit n
   where
     pUnit :: Parser T.Text (Integer -> Offsets)
-    pUnit = (P.string "mo"  $> \mo -> Offsets mo 0 0 0 0) <|>
-            (P.string "w"   $> \w  -> Offsets 0  w 0 0 0) <|>
-            (P.string "d"   $> \d  -> Offsets 0  0 d 0 0) <|>
-            (P.string "h"   $> \h  -> Offsets 0  0 0 h 0) <|>
-            (P.string "min" $> \m  -> Offsets 0  0 0 0 m)
+    pUnit = (P.string "y"   $> \y  -> Offsets y  0 0 0 0 0) <|>
+            (P.string "mo"  $> \mo -> Offsets 0 mo 0 0 0 0) <|>
+            (P.string "w"   $> \w  -> Offsets 0  0 w 0 0 0) <|>
+            (P.string "d"   $> \d  -> Offsets 0  0 0 d 0 0) <|>
+            (P.string "h"   $> \h  -> Offsets 0  0 0 0 h 0) <|>
+            (P.string "min" $> \m  -> Offsets 0  0 0 0 0 m)
 
 -- | This parser parses strings of the form "MM-DD-YYYY HH:MM <TZ>" where <TZ> is a timezone, and where some of the
 -- fields are optional. The allowed formats are:
